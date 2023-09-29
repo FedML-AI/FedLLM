@@ -17,16 +17,14 @@ import logging
 import torch
 from torch import Tensor
 from torch.nn import Module
-from transformers import Trainer
-from transformers.deepspeed import is_deepspeed_available, is_deepspeed_zero3_enabled
+from transformers.deepspeed import is_deepspeed_zero3_enabled
 
-if is_deepspeed_available():
-    import deepspeed
-
-    is_deepspeed_initialized = deepspeed.comm.is_initialized
-else:
-    def is_deepspeed_initialized() -> bool:
-        return False
+from .distributed import (
+    is_deepspeed_initialized,
+    is_deepspeed_module,
+    gather_parameter,
+    get_rank,
+)
 
 T = TypeVar("T")
 
@@ -46,14 +44,6 @@ def to_device(data: T, device: Union[torch.device, str], non_blocking: bool = Tr
         data = data.to(device, non_blocking=non_blocking)
 
     return data
-
-
-def is_main_process(trainer: Trainer, local: bool = False) -> bool:
-    return trainer.is_local_process_zero() if local else trainer.is_world_process_zero()
-
-
-def should_process_save(trainer: Trainer) -> bool:
-    return is_main_process(trainer, trainer.args.save_on_each_node)
 
 
 def log_helper(
@@ -87,9 +77,9 @@ def load_state_dict(
         load_state_dict_helper(
             module=model,
             state_dict=state_dict,
-            error_msgs=error_msgs,
             strict=strict,
-            metadata=metadata
+            metadata=metadata,
+            error_msgs=error_msgs
         )
     else:
         model.load_state_dict(state_dict, strict=strict)
@@ -127,42 +117,31 @@ def load_state_dict_helper(
 
     # Parameters of module and children will start with prefix. We can exit early if there are none in this state_dict
     if any(key.startswith(prefix) for key in state_dict):
-        if is_deepspeed_initialized() and is_deepspeed_zero3_enabled() and is_deepspeed_module(module):
-            # In sharded models, each shard has only part of the full state_dict, so only gather
-            # parameters that are in the current state_dict.
-            named_parameters = dict(module.named_parameters(prefix=prefix[:-1], recurse=False))
-            params_to_gather = [named_parameters[k] for k in state_dict.keys() if k in named_parameters]
-            if len(params_to_gather) > 0:
-                # because zero3 puts placeholders in model params, this context manager gathers the params of
-                # the current layer, then loads from the state dict and then re-partitions them again
-                with deepspeed.zero.GatheredParameters(params_to_gather, modifier_rank=0):
-                    if deepspeed.comm.get_rank() == 0:
-                        module._load_from_state_dict(
-                            state_dict=state_dict,
-                            prefix=prefix,
-                            local_metadata=local_metadata,
-                            strict=strict,
-                            missing_keys=[],
-                            unexpected_keys=[],
-                            error_msgs=error_msgs
-                        )
-        else:
-            module._load_from_state_dict(
-                state_dict=state_dict,
-                prefix=prefix,
-                local_metadata=local_metadata,
-                strict=strict,
-                missing_keys=[],
-                unexpected_keys=[],
-                error_msgs=error_msgs
-            )
+        # In sharded models, each shard has only part of the full state_dict, so only gather
+        # parameters that are in the current state_dict.
+        named_parameters = dict(module.named_parameters(prefix=prefix[:-1], recurse=False))
+        params_to_gather = [named_parameters[k] for k in state_dict.keys() if k in named_parameters]
+        if len(params_to_gather) > 0:
+            # Since Zero3 puts placeholders in model params, this context manager gathers the params of
+            # the current layer, then loads from the state dict and then re-partitions them again
+            with gather_parameter(params_to_gather, modifier_rank=0):
+                if get_rank() == 0 or not is_deepspeed_module(module):
+                    module._load_from_state_dict(
+                        state_dict=state_dict,
+                        prefix=prefix,
+                        local_metadata=local_metadata,
+                        strict=strict,
+                        missing_keys=[],
+                        unexpected_keys=[],
+                        error_msgs=error_msgs
+                    )
 
     for name, child in module.named_children():
         load_state_dict_helper(
             module=child,
             state_dict=state_dict,
-            error_msgs=error_msgs,
             strict=strict,
             prefix=f"{prefix}{name}.",
-            metadata=metadata
+            metadata=metadata,
+            error_msgs=error_msgs
         )
