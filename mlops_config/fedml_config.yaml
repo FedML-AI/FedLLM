@@ -22,7 +22,7 @@ model_args:
 
 train_args:
   federated_optimizer: "FedAvg"
-  client_optimizer: "adamw_hf"
+  client_optimizer: "adamw_torch"
   server_optimizer: "FedAvg"
   client_num_in_total: 2  # number of clients
   client_num_per_round: 2  # choose from 1~client_num_in_total
@@ -34,18 +34,18 @@ train_args:
   fp16: False
   bf16: False
   gradient_checkpointing: True
-  per_device_train_batch_size: 2
-  per_device_eval_batch_size: 2
+  per_device_train_batch_size: 8
+  per_device_eval_batch_size: 8
   gradient_accumulation_steps: 1
   eval_accumulation_steps: 4
-  learning_rate: 1.0e-5
+  learning_rate: 3.0e-4
   warmup_steps: 50
   num_train_epochs: 5  # number of training epoch for the entire training, should >= comm_round
   output_dir: "~/fedml_logs/MLOps/{run_id}/dolly_pythia-70m"
-  logging_steps: 50
+  logging_steps: 20
   eval_steps: 200
   save_steps: 200
-  max_steps: 17500  # number of training steps for the entire training, should >= comm_round, this option overwrites `num_train_epochs`
+  max_steps: 1000  # number of training steps for the entire training, should >= comm_round, this option overwrites `num_train_epochs`
   save_total_limit: 10
   logging_strategy: "no"
   evaluation_strategy: "no"  # should be turned off
