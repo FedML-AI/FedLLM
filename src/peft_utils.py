@@ -1,3 +1,6 @@
+from .llm_finetune.src.peft_utils import *
+# -----------------------------------------------------------------
+
 from peft import PeftModel, PeftType, PromptLearningConfig
 
 from .utils import load_state_dict

@@ -8,7 +8,7 @@ from transformers import (
     TrainingArguments,
 )
 
-from .llm_finetune.src.hf_trainer import HFTrainer
+from .hf_trainer import HFTrainer
 
 
 class HFResumeTrainerCallback(TrainerCallback):
