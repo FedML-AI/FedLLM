@@ -444,6 +444,22 @@ class LLMAggregator(ServerAggregator):
 
         self.log("finished")
 
+    def on_after_aggregation(self, aggregated_model_or_grad: OrderedDict) -> OrderedDict:
+        self.log(f"saving aggregated model to \"{self.checkpoint_dir}\"")
+        save_model_state_dict(self.trainer)
+
+        if should_process_save(self.trainer):
+            checkpoint_dir = Path(self.checkpoint_dir) / f"round_{self.round_idx}"
+            checkpoint_dir.mkdir(parents=True, exist_ok=True)
+
+            # TODO: verify, convert dtype
+            torch.save(aggregated_model_or_grad, str(checkpoint_dir / PEFT_WEIGHTS_NAME))
+
+        # all process should wait
+        barrier()
+
+        return super().on_after_aggregation(aggregated_model_or_grad)
+
     def test(self, test_data, device, args: Arguments) -> None:
         self.log("start")
 
