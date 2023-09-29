@@ -71,11 +71,11 @@ Hugging Face repo access.
 Clone the repo then go to FedLLM directory:
 
 ```shell
-# clone the top-level repo
-git clone https://github.com/FedML-AI/FedML.git
+# clone the repo and the submodules
+git clone --recurse-submodules https://github.com/FedML-AI/FedLLM.git
 
-# go to the FedLLM directory
-cd python/app/fedllm
+# go to the project directory
+cd FedLLM
 ```
 
 Install dependencies with the following command:
@@ -88,8 +88,7 @@ See [Dependencies](#dependencies) for more information on the dependency version
 
 ### Prepare Dataset
 
-Run the following command to
-download [`databricks-dolly-15k`](https://github.com/databrickslabs/dolly/tree/master/data).
+Run the following command to download the example datasets.
 
 ```shell
 bash scripts/setup.sh
@@ -97,32 +96,7 @@ bash scripts/setup.sh
 
 ### Conventional/Centralized Training
 
-The [`run_train.py`](run_train.py) contains a minimal example for conventional/centralized LLM training and fine-tuning
-on [`databricks-dolly-15k`](https://github.com/databrickslabs/dolly/tree/master/data) dataset.
-
-Example scripts:
-
-```shell
-# train on a single GPU
-bash scripts/train.sh \
-  ... # additional arguments
-
-# train with PyTorch DDP
-bash scripts/train_ddp.sh \
-  ... # additional arguments
-
-# train with DeepSpeed
-bash scripts/train_deepspeed.sh \
-  ... # additional arguments
-```
-
-> **Note**
-> If you have an Amper or newer GPU (e.g., RTX 3000 series or newer), you could turn on **bf16** to have more
-> efficient training by passing `--bf16 "True"` in the command line.
-
-> **Warning**
-> when using PyTorch DDP with LoRA and gradient checkpointing, you need to turn off `find_unused_parameters`
-> by passing `--ddp_find_unused_parameters "False"` in the command line.
+See [FedML-AI/llm-finetune](https://github.com/FedML-AI/llm-finetune) for detail.
 
 ### Cross-silo Federated Learning with FedML
 
@@ -155,13 +129,9 @@ environment_args:
 
 data_args:
   dataset: "databricks-dolly"  # dataset name; this setting is required for FedML built-in datasets
-  dataset_name: null
-  dataset_path:
-    - ".data/dolly_niid_full/train_databricks-dolly-15k-seed=1234.jsonl"  # train dataset path
-    - ".data/dolly_niid_full/test_databricks-dolly-15k-seed=1234.jsonl"  # test dataset path
-  client_dataset_path: # [optional] if specified, will replace content in dataset_path for client
-    - ".data/dolly_niid_full/train_databricks-dolly-15k-seed=1234.jsonl"  # [optional] train dataset path for client
-    - ".data/dolly_niid_full/test_databricks-dolly-15k-seed=1234.jsonl"  # [optional] test dataset path for client
+  dataset_name: "FedML/databricks-dolly-15k-niid"
+  dataset_path: [ ]
+  client_dataset_path: [ ]
   test_dataset_size: 200  # this is ignored when `dataset_path` has more than 1 element
   remove_long_seq: True  # if `True` remove all data whose sequence length > max_seq_length
 
@@ -172,31 +142,31 @@ model_args:
 
 train_args:
   federated_optimizer: "FedAvg"
-  client_optimizer: "adamw_hf"
+  client_optimizer: "adamw_torch"
   server_optimizer: "FedAvg"
   client_num_in_total: 2  # number of clients
   client_num_per_round: 2  # choose from 1~client_num_in_total
   comm_round: 5  # number of rounds of aggregation
   # below are the same as HuggingFace settings
   task: instruction  # choose from `finetune` and `instruction`. If set to `instruction`, will apply template to the dataset and affects loss calculation.
-  deepspeed: "configs/ds_z3_bf16_config.json"
+  deepspeed: "configs/deepspeed/ds_z3_bf16_config.json"
   seed: 1234
   fp16: False
   bf16: False
   gradient_checkpointing: True
-  per_device_train_batch_size: 2
-  per_device_eval_batch_size: 2
+  per_device_train_batch_size: 8
+  per_device_eval_batch_size: 8
   gradient_accumulation_steps: 1
   eval_accumulation_steps: 4
-  learning_rate: 1.0e-5
+  learning_rate: 3.0e-4
   warmup_steps: 50
   num_train_epochs: 5  # number of training epoch for the entire training, should >= comm_round
-  output_dir: "~/fedml_logs/MLOps/{run_id}/dolly_pythia-70m"
-  logging_steps: 50
+  output_dir: ".logs/FedML/{run_id}/dolly_niid_pythia-70m"
+  logging_steps: 20
   eval_steps: 200
   save_steps: 200
   max_steps: 1000  # number of training steps for the entire training, should >= comm_round, this option overwrites `num_train_epochs`
-  save_total_limit: 20
+  save_total_limit: 10
   logging_strategy: "no"
   evaluation_strategy: "no"  # should be turned off
   save_strategy: "no"
@@ -365,7 +335,7 @@ We have tested our implement with the following setup:
 
 - Ubuntu `20.04.5 LTS` and `22.04.2 LTS`
 - CUDA `11.8`, `11.7` and `11.6`
-- Python `3.8.13`
+- Python `3.8.13` and `3.9.16`
     - `fedml>=0.8.4a7`
     - `torch>=2.0.0,<=2.0.1`
     - `torchvision>=0.15.1,<=0.15.2`
