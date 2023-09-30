@@ -23,12 +23,11 @@ NUM_NODES="${5:-1}"
 # FedML config
 CONFIG_PATH="${6:-"fedml_config/fedml_config.yaml"}"
 
-bash scripts/run_fedml.sh \
-  "${MASTER_ADDR}" \
-  "${MASTER_PORT}" \
-  "${NUM_NODES}" \
-  run_fedllm.py \
+python3 run_mlops.py \
   --cf "${CONFIG_PATH}" \
   --rank "${RANK}" \
   --role client \
-  --run_id "${RUN_ID}"
+  --run_id "${RUN_ID}" \
+  --master_addr "${MASTER_ADDR}" \
+  --master_port "${MASTER_PORT}" \
+  --num_nodes "${NUM_NODES}"
