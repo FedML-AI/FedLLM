@@ -23,6 +23,8 @@ The repo contains:
 
 ## News
 
+* __[2023/09/28]__ FedLLM becomes a standalone repo.
+
 * __[2023/07/19]__ FedLLM supports [Llama 2](https://ai.meta.com/llama/). See [How to use Llama 2](#how-to-use-llama-2)
   for detail.
 
@@ -192,7 +194,12 @@ tracking_args:
 
 #### 3. Run FedML
 
-To launch an experiment, a `RUN_ID` should be provided. For each experiment, the same `RUN_ID` should be used across all the client(s) and aggregator server.
+To launch an experiment, a `RUN_ID` should be provided. For each experiment, the same `RUN_ID` should
+be used across all the client(s) and aggregator server.
+For clients, `client_rank` is also required. Each client should have a unique `client_rank` and
+the value should be in range from 1 to N where N is the number of clients.
+`client_rank` is the distributed rank which is similar to an index in an array; each client can be
+"indexed" by its rank.
 
 
 > **Note**
@@ -207,9 +214,10 @@ Example scripts:
 bash scripts/run_fedml_server.sh "$RUN_ID"
 
 # run client(s)
-for client_rank in "${client_ranks}"; do
-  bash scripts/run_fedml_client.sh "$client_rank" "$RUN_ID" &
-done
+bash scripts/run_fedml_client.sh 1 "$RUN_ID"
+bash scripts/run_fedml_client.sh 2 "$RUN_ID"
+bash scripts/run_fedml_client.sh 3 "$RUN_ID"
+...
 ```
 
 _See FedML's [Getting Started](https://doc.fedml.ai/starter/getting_started.html) for detail._
