@@ -1,3 +1,4 @@
 [submodule "src/llm_finetune"]
 	path = src/llm_finetune
 	url = https://github.com/FedML-AI/llm-finetune.git
+	branch = main
