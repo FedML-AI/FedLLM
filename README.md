@@ -267,10 +267,10 @@ To compile an example package, use the following command in the **FedLLM root di
 
 ```shell
 # build aggregator server package
-fedml build -t server -sf . -ep run_mlops.py -df build -cf "mlops_config" -ig "build"
+fedml build -t server -sf . -ep launch_fedllm.py -df build -cf "mlops_config" -ig "build"
 
 # build client package
-fedml build -t client -sf . -ep run_mlops.py -df build -cf "mlops_config" -ig "build"
+fedml build -t client -sf . -ep launch_fedllm.py -df build -cf "mlops_config" -ig "build"
 ```
 
 #### 2. Create an Octopus Application

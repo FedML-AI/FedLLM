@@ -23,7 +23,7 @@ NUM_NODES="${5:-1}"
 # FedML config
 CONFIG_PATH="${6:-"fedml_config/fedml_config.yaml"}"
 
-python3 run_mlops.py \
+python3 launch_fedllm.py \
   --cf "${CONFIG_PATH}" \
   --rank "${RANK}" \
   --role client \

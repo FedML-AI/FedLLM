@@ -87,7 +87,7 @@ def main() -> int:
         process = ClientConstants.exec_console_with_shell_script_list(
             [
                 python_program,         # python
-                entry_fill_full_path,   # ./run_mlops.py
+                entry_fill_full_path,   # ./launch_fedllm.py
                 "--cf",                 # --cf
                 conf_file_full_path,    # $mlops_path/fedml_config.yaml
                 "--rank",               # --rank
@@ -95,7 +95,7 @@ def main() -> int:
                 "--role",               # --role
                 "client",               # client
             ],
-        python run_mlops.py --cf fedml_config/fedml_config.yaml --rank 0 --role client
+        python launch_fedllm.py --cf fedml_config/fedml_config.yaml --rank 0 --role client
     """
     cmd = []
     if args.num_gpus > 0:

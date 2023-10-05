@@ -57,7 +57,7 @@ for target in "client" "server"; do
   fedml build \
     -t "${target}" \
     -sf . \
-    -ep run_mlops.py \
+    -ep launch_fedllm.py \
     -df build \
     -cf "${CONFIG_PATH}" \
     -ig "${IGNORE_STR}"
