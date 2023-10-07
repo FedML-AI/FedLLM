@@ -529,18 +529,14 @@ def main(args: Arguments) -> None:
     device = fedml.device.get_device(args)
 
     model_args, dataset_args = parse_hf_args((ModelArguments, DatasetArguments), args)
-
-    tokenizer = get_tokenizer(
-        model_args,
-        add_special_tokens=getattr(args, "task", "finetune") == "instruction"
-    )
+    is_instruction_finetune = getattr(args, "task", "finetune") == "instruction"
 
     if args.local_rank == 0:
         # Initialize model before initializing TrainingArgs to load the full model in memory
         # This is required when using DeepSpeed Zero3 w/ FedLLM
         model = get_model(
             model_args,
-            tokenizer_length=len(tokenizer),
+            tokenizer_length=len(get_tokenizer(model_args, add_special_tokens=is_instruction_finetune)),
             use_cache=not getattr(args, "gradient_checkpointing", False)
         )
 
@@ -555,6 +551,9 @@ def main(args: Arguments) -> None:
     barrier()
 
     training_args, *_ = parse_hf_args(FinetuningArguments, args)
+
+    # tokenizer need to be recreated after transformers.TrainingArguments to avoid serialization problems
+    tokenizer = get_tokenizer(model_args, add_special_tokens=is_instruction_finetune)
 
     # update cross-silo hierarchical related settings
     if getattr(args, "use_customized_hierarchical", False):
