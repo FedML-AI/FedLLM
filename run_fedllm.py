@@ -37,7 +37,7 @@ from src.llm_finetune.run_train import (
     get_max_seq_length,
     get_tokenizer,
 )
-from src.modeling_utils import get_data_collator
+from src.modeling_utils import get_data_collator, to_device
 from src.peft_utils import set_peft_model_state_dict
 from src.trainer_callback import PauseResumeCallback, SavePeftModelCallback
 from src.typing import ModelType, PathType, TokenizerType
@@ -47,7 +47,6 @@ from src.utils import (
     log_helper,
     parse_hf_args,
     save_config,
-    to_device,
 )
 
 

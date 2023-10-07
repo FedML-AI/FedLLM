@@ -3,7 +3,7 @@ from .llm_finetune.src.peft_utils import *
 
 from peft import PeftModel, PeftType, PromptLearningConfig
 
-from .utils import load_state_dict
+from .modeling_utils import load_state_dict
 
 
 def set_peft_model_state_dict(
