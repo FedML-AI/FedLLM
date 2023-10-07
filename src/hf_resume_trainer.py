@@ -43,14 +43,14 @@ class HFResumeTrainer(HFTrainer):
     def __init__(
             self,
             *pos_args,
-            is_resume_train: bool = False,
+            is_resume_from_interrupt: bool = False,
             resume_train_callback: Optional[HFResumeTrainerCallback] = None,
             **kwargs
     ):
         super().__init__(*pos_args, **kwargs)
 
         # set to `True` if continuing from previous early-stopped train
-        self.is_resume_train = is_resume_train
+        self.is_resume_from_interrupt = is_resume_from_interrupt
 
         if resume_train_callback is None:
             resume_train_callback = HFResumeTrainerCallback()
@@ -58,17 +58,17 @@ class HFResumeTrainer(HFTrainer):
         self.add_callback(self.resume_train_callback)
 
     def create_optimizer_and_scheduler(self, num_training_steps: int) -> None:
-        if not self.is_resume_train:
+        if not self.is_resume_from_interrupt:
             return super().create_optimizer_and_scheduler(num_training_steps)
 
     def create_optimizer(self) -> Optimizer:
-        if not self.is_resume_train:
+        if not self.is_resume_from_interrupt:
             return super().create_optimizer()
         else:
             return self.optimizer
 
     def create_scheduler(self, num_training_steps: int, optimizer: Optimizer = None):
-        if not self.is_resume_train:
+        if not self.is_resume_from_interrupt:
             return super().create_scheduler(num_training_steps, optimizer)
         else:
             return self.lr_scheduler
@@ -80,7 +80,7 @@ class HFResumeTrainer(HFTrainer):
             ignore_keys_for_eval: Optional[List[str]] = None,
             **kwargs
     ) -> TrainOutput:
-        if self.is_resume_train:
+        if self.is_resume_from_interrupt:
             reset_list = self.resume_train_callback.reset_list
 
             # turn off TrainingArguments.deepspeed to avoid duplicated initializations
@@ -110,5 +110,5 @@ class HFResumeTrainer(HFTrainer):
             **kwargs
         )
 
-        self.is_resume_train = True
+        self.is_resume_from_interrupt = True
         return train_output
