@@ -50,6 +50,14 @@ def parse_args(args: Optional[Sequence[str]] = None, namespace: Optional[Namespa
         help="Number of GPUs in this node/device. If unspecified, will use all GPUs."
              " This will be overrode by environment variable `CUDA_VISIBLE_DEVICES`."
     )
+    parser.add_argument(
+        "--launcher",
+        dest="launcher",
+        type=str,
+        default="auto",
+        choices=["auto", "python", "torch", "deepspeed"],
+        help="Program launcher."
+    )
 
     # parse args
     output_args, *_ = parser.parse_known_args(args=args, namespace=namespace)
@@ -61,6 +69,12 @@ def parse_args(args: Optional[Sequence[str]] = None, namespace: Optional[Namespa
 
     if output_args.num_gpus is None:
         output_args.num_gpus = torch.cuda.device_count()
+
+    if output_args.launcher == "auto":
+        if output_args.num_gpus > 0:
+            output_args.launcher = "deepspeed"
+        else:
+            output_args.launcher = "python"
 
     return output_args
 
@@ -98,7 +112,7 @@ def main() -> int:
         python launch_fedllm.py --cf fedml_config/fedml_config.yaml --rank 0 --role client
     """
     cmd = []
-    if args.num_gpus > 0:
+    if args.launcher == "deepspeed":
         cmd.extend([
             f"-m",
             f"deepspeed.launcher.runner",
@@ -119,6 +133,16 @@ def main() -> int:
                 f"--include", f"{args.master_addr}:{os.getenv('CUDA_VISIBLE_DEVICES')}",
             ])
             os.environ.pop("CUDA_VISIBLE_DEVICES")
+
+    elif args.launcher == "torch":
+        cmd.extend([
+            f"-m",
+            f"torch.distributed.run",
+            f"--nnodes", f"{args.num_nodes}",
+            f"--nproc_per_node", f"{args.num_gpus}",
+            f"--rdzv_endpoint", f"{args.master_addr}:{args.master_port}",
+            f"--rdzv_backend", f"c10d"
+        ])
 
     cmd.extend([
         "run_fedllm.py",  # main program

@@ -19,9 +19,10 @@ TORCH_DISTRIBUTED_DEFAULT_PORT="${TORCH_DISTRIBUTED_DEFAULT_PORT:-29500}"
 MASTER_ADDR="${2:-"localhost"}"
 MASTER_PORT="${3:-$((TORCH_DISTRIBUTED_DEFAULT_PORT + RANK))}"
 NUM_NODES="${4:-1}"
+LAUNCHER="${5:-"auto"}"
 
 # FedML config
-CONFIG_PATH="${5:-"fedml_config/fedml_config.yaml"}"
+CONFIG_PATH="${6:-"fedml_config/fedml_config.yaml"}"
 
 python3 launch_fedllm.py \
   --cf "${CONFIG_PATH}" \
@@ -30,4 +31,5 @@ python3 launch_fedllm.py \
   --run_id "${RUN_ID}" \
   --master_addr "${MASTER_ADDR}" \
   --master_port "${MASTER_PORT}" \
-  --num_nodes "${NUM_NODES}"
+  --num_nodes "${NUM_NODES}" \
+  --launcher "${LAUNCHER}"

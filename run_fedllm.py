@@ -4,6 +4,7 @@ from collections import OrderedDict
 import gc
 import logging
 import math
+import os
 from pathlib import Path
 
 from accelerate.utils import broadcast_object_list
@@ -51,6 +52,10 @@ from src.utils import (
 
 
 def _parse_args(args: Arguments) -> Arguments:
+    # When launched with `torchrun`, local_rank is set via environment variable
+    # see https://pytorch.org/docs/stable/elastic/run.html
+    args.local_rank = int(os.getenv("LOCAL_RANK", args.local_rank))
+
     if args.role == "client":
         if hasattr(args, "client_dataset_path"):
             args.dataset_path = args.client_dataset_path
