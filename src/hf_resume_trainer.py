@@ -7,6 +7,7 @@ from transformers import (
     TrainerState,
     TrainingArguments,
 )
+from transformers.trainer_utils import TrainOutput
 
 from .hf_trainer import HFTrainer
 
@@ -80,7 +81,7 @@ class HFResumeTrainer(HFTrainer):
             trial: Union["optuna.Trial", Dict[str, Any]] = None,
             ignore_keys_for_eval: Optional[List[str]] = None,
             **kwargs
-    ):
+    ) -> TrainOutput:
         if self.is_resume_train:
             reset_list = self.resume_train_callback.reset_list
 
@@ -88,6 +89,11 @@ class HFResumeTrainer(HFTrainer):
             # TODO: verify model, model_wrapped, deepspeed, optimizer, lr_scheduler after reset
             reset_list.append((self.args, "deepspeed", self.args.deepspeed))
             self.args.deepspeed = None
+
+            # TODO: remove the hasattr check once we require transformers>=4.31.0
+            if hasattr(self, "_created_lr_scheduler"):
+                reset_list.append((self, "_created_lr_scheduler", self._created_lr_scheduler))
+                self._created_lr_scheduler = False
 
             if hasattr(self, "accelerator"):
                 # when resuming, should disable the free_memory function call at the beginning
@@ -99,7 +105,7 @@ class HFResumeTrainer(HFTrainer):
                 reset_list.append((self, "is_deepspeed_enabled", self.is_deepspeed_enabled))
                 self.is_deepspeed_enabled = False
 
-        super().train(
+        train_output = super().train(
             resume_from_checkpoint=resume_from_checkpoint,
             trial=trial,
             ignore_keys_for_eval=ignore_keys_for_eval,
@@ -107,3 +113,4 @@ class HFResumeTrainer(HFTrainer):
         )
 
         self.is_resume_train = True
+        return train_output
