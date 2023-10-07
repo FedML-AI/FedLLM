@@ -10,6 +10,7 @@ from transformers import (
 from transformers.trainer_utils import TrainOutput
 
 from .hf_trainer import HFTrainer
+from .utils import dummy_func
 
 
 class HFResumeTrainerCallback(TrainerCallback):
@@ -72,9 +73,6 @@ class HFResumeTrainer(HFTrainer):
         else:
             return self.lr_scheduler
 
-    def dummy_function(self, *args, **kwargs) -> None:
-        return None
-
     def train(
             self,
             resume_from_checkpoint: Optional[Union[str, bool]] = None,
@@ -99,7 +97,7 @@ class HFResumeTrainer(HFTrainer):
                 # when resuming, should disable the free_memory function call at the beginning
                 # of Trainer._inner_training_loop
                 reset_list.append((self.accelerator, "free_memory", self.accelerator.free_memory))
-                self.accelerator.free_memory = self.dummy_function
+                self.accelerator.free_memory = dummy_func
 
             if hasattr(self, "is_deepspeed_enabled"):
                 reset_list.append((self, "is_deepspeed_enabled", self.is_deepspeed_enabled))
