@@ -8,6 +8,7 @@ from subprocess import CalledProcessError
 import sys
 
 import torch.cuda
+import yaml
 
 TORCH_DISTRIBUTED_DEFAULT_PORT = 29500
 
@@ -15,6 +16,14 @@ TORCH_DISTRIBUTED_DEFAULT_PORT = 29500
 def parse_args(args: Optional[Sequence[str]] = None, namespace: Optional[Namespace] = None) -> Namespace:
     parser = ArgumentParser()
 
+    parser.add_argument(
+        "--cf",
+        "--config_file",
+        "--yaml_config_file",
+        dest="config_file",
+        help="yaml configuration file",
+        type=str
+    )
     parser.add_argument(
         "--rank",
         dest="rank",
@@ -71,10 +80,25 @@ def parse_args(args: Optional[Sequence[str]] = None, namespace: Optional[Namespa
         output_args.num_gpus = torch.cuda.device_count()
 
     if output_args.launcher == "auto":
-        if output_args.num_gpus > 0:
-            output_args.launcher = "deepspeed"
-        else:
-            output_args.launcher = "python"
+        # find `launcher` from config file if not specified in CLI
+        with open(output_args.config_file, "r") as f:
+            config = yaml.safe_load(f)
+
+        launcher = output_args.launcher
+        for _, param_group in config.items():
+            if "launcher" in param_group:
+                # `launcher` is a second level attribute
+                launcher = param_group["launcher"]
+                break
+
+        if launcher == "auto":
+            # if config file doesn't specify `launcher` or the value is "auto"
+            if output_args.num_gpus > 0:
+                launcher = "deepspeed"
+            else:
+                launcher = "python"
+
+        output_args.launcher = launcher
 
     return output_args
 
@@ -143,6 +167,9 @@ def main() -> int:
             f"--rdzv_endpoint", f"{args.master_addr}:{args.master_port}",
             f"--rdzv_backend", f"c10d"
         ])
+
+    elif args.launcher != "python":
+        raise ValueError(f"Unsupported launcher type \"{args.launcher}\".")
 
     cmd.extend([
         "run_fedllm.py",  # main program

@@ -128,6 +128,7 @@ common_args:
 
 environment_args:
   bootstrap: fedml_config/bootstrap.sh  # change to "config/bootstrap.sh" when using MLOps
+  launcher: "auto"  # program launcher, choose from `auto`, `torch`, `deepspeed`
 
 data_args:
   dataset: "databricks-dolly"  # dataset name; this setting is required for FedML built-in datasets
