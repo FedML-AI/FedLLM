@@ -8,7 +8,8 @@ from contextlib import contextmanager, nullcontext
 from torch import distributed as dist
 from torch.nn import Module, Parameter
 from transformers import Trainer
-from transformers.deepspeed import is_deepspeed_available, is_deepspeed_zero3_enabled
+
+from .integrations import is_deepspeed_available, is_deepspeed_zero3_enabled
 
 if is_deepspeed_available():
     import deepspeed

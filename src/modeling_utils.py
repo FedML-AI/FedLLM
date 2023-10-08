@@ -15,7 +15,6 @@ import torch
 from torch import Tensor
 from torch.nn import Module
 from torch.nn.modules.module import _IncompatibleKeys
-from transformers.deepspeed import is_deepspeed_zero3_enabled
 
 from .distributed import (
     is_deepspeed_initialized,
@@ -23,6 +22,7 @@ from .distributed import (
     gather_parameter,
     get_rank,
 )
+from .integrations import is_deepspeed_zero3_enabled
 
 T = TypeVar("T")
 

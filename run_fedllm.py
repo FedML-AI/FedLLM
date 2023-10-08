@@ -18,7 +18,6 @@ from peft import get_peft_model_state_dict, PeftModel
 from peft.utils import WEIGHTS_NAME as PEFT_WEIGHTS_NAME
 import torch.cuda
 from torch.nn import Module
-from transformers.deepspeed import is_deepspeed_zero3_enabled
 from transformers.utils import WEIGHTS_NAME as HF_WEIGHTS_NAME
 
 from src.configurations import DatasetArguments, FinetuningArguments, ModelArguments
@@ -32,6 +31,7 @@ from src.distributed import (
 )
 from src.hf_resume_trainer import HFResumeTrainer
 from src.hf_trainer import HFTrainer
+from src.integrations import is_deepspeed_zero3_enabled
 from src.llm_finetune.run_train import (
     get_dataset,
     get_model,
