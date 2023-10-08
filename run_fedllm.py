@@ -29,7 +29,7 @@ from src.distributed import (
     is_main_process,
     should_process_save,
 )
-from src.hf_resume_trainer import HFResumeTrainer
+from src.fedllm_trainer import FedLLMTrainer
 from src.hf_trainer import HFTrainer
 from src.integrations import is_deepspeed_zero3_enabled
 from src.llm_finetune.run_train import (
@@ -138,8 +138,8 @@ def get_hf_trainer(
         tokenizer: TokenizerType,
         training_args: FinetuningArguments,
         **kwargs
-) -> HFResumeTrainer:
-    return HFResumeTrainer(
+) -> FedLLMTrainer:
+    return FedLLMTrainer(
         model=model,
         tokenizer=tokenizer,
         args=training_args,

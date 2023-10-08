@@ -23,7 +23,7 @@ from .typing import (
 from .utils import dummy_func
 
 
-class HFResumeTrainerCallback(TrainerCallback):
+class FedLLMTrainerCallback(TrainerCallback):
     def __init__(self, reset_list: Optional[List[Tuple[Optional[Any], str, Any]]] = None):
         """
 
@@ -49,7 +49,7 @@ class HFResumeTrainerCallback(TrainerCallback):
         return control
 
 
-class HFResumeTrainer(HFTrainer):
+class FedLLMTrainer(HFTrainer):
     def __init__(
             self,
             model: Union[ModelType, Module] = None,
@@ -64,7 +64,7 @@ class HFResumeTrainer(HFTrainer):
             optimizers: Tuple[Optimizer, LrSchedulerType] = (None, None),
             preprocess_logits_for_metrics: Optional[Callable[[Tensor, Tensor], Tensor]] = None,
             is_resume_from_interrupt: bool = False,
-            resume_train_callback: Optional[HFResumeTrainerCallback] = None
+            resume_train_callback: Optional[FedLLMTrainerCallback] = None
     ):
         super().__init__(
             model=model,
@@ -84,7 +84,7 @@ class HFResumeTrainer(HFTrainer):
         self.is_resume_from_interrupt = is_resume_from_interrupt
 
         if resume_train_callback is None:
-            resume_train_callback = HFResumeTrainerCallback()
+            resume_train_callback = FedLLMTrainerCallback()
         self.resume_train_callback = resume_train_callback
         self.add_callback(self.resume_train_callback)
 
