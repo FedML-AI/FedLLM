@@ -100,6 +100,9 @@ def parse_args(args: Optional[Sequence[str]] = None, namespace: Optional[Namespa
 
         output_args.launcher = launcher
 
+    if output_args.num_gpus <= 0:
+        output_args.launcher = "python"
+
     return output_args
 
 
