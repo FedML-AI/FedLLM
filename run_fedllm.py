@@ -40,7 +40,7 @@ from src.llm_finetune.run_train import (
 )
 from src.modeling_utils import get_data_collator, to_device
 from src.peft_utils import set_peft_model_state_dict
-from src.trainer_callback import PauseResumeCallback, SavePeftModelCallback
+from src.trainer_callback import PauseResumeCallback
 from src.typing import ModelType, PathType, TokenizerType
 from src.utils import (
     get_real_path,
@@ -432,9 +432,7 @@ class LLMAggregator(ServerAggregator):
             args=self.args,
             model=self.model,
             tokenizer=self.tokenizer,
-            training_args=self.training_args,
-            # save peft adapted model weights
-            callbacks=[SavePeftModelCallback]
+            training_args=self.training_args
         )
 
         # save config

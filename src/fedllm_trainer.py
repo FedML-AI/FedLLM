@@ -119,20 +119,16 @@ class FedLLMTrainer(HFTrainer):
             reset_list.append((self.args, "deepspeed", self.args.deepspeed))
             self.args.deepspeed = None
 
-            # TODO: remove the hasattr check once we require transformers>=4.31.0
-            if hasattr(self, "_created_lr_scheduler"):
-                reset_list.append((self, "_created_lr_scheduler", self._created_lr_scheduler))
-                self._created_lr_scheduler = False
+            reset_list.append((self, "_created_lr_scheduler", self._created_lr_scheduler))
+            self._created_lr_scheduler = False
 
-            if hasattr(self, "accelerator"):
-                # when resuming, should disable the free_memory function call at the beginning
-                # of Trainer._inner_training_loop
-                reset_list.append((self.accelerator, "free_memory", self.accelerator.free_memory))
-                self.accelerator.free_memory = dummy_func
+            # when resuming, should disable the free_memory function call at the beginning
+            # of Trainer._inner_training_loop
+            reset_list.append((self.accelerator, "free_memory", self.accelerator.free_memory))
+            self.accelerator.free_memory = dummy_func
 
-            if hasattr(self, "is_deepspeed_enabled"):
-                reset_list.append((self, "is_deepspeed_enabled", self.is_deepspeed_enabled))
-                self.is_deepspeed_enabled = False
+            reset_list.append((self, "is_deepspeed_enabled", self.is_deepspeed_enabled))
+            self.is_deepspeed_enabled = False
 
         train_output = super().train(
             resume_from_checkpoint=resume_from_checkpoint,
