@@ -289,6 +289,11 @@ fedml build -t server -sf . -ep launch_fedllm.py -df build -cf "mlops_config" -i
 fedml build -t client -sf . -ep launch_fedllm.py -df build -cf "mlops_config" -ig "build"
 ```
 
+We also provide an example script for building the packages:
+```shell
+bash scripts/build/fedml_build.sh
+```
+
 #### 2. Create an Octopus Application
 
 1. Once logged in, go to [FedML Octopus](https://open.fedml.ai/octopus/userGuides/index).
