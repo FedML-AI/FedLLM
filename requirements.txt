@@ -5,7 +5,6 @@ peft>=0.3.0
 deepspeed>=0.8.0
 accelerate
 transformers[torch]>=4.25.1
-xformers
 datasets>=2.8.0
 evaluate
 einops
@@ -14,4 +13,6 @@ mpi4py
 sentencepiece
 tensorboard
 tqdm
+ninja
+packaging
 pyyaml
