@@ -142,6 +142,7 @@ model_args:
   skip_log_model_net: True  # toggle auto model input shape inference; if set to `False`, could slow down the training
   model_name_or_path: "EleutherAI/pythia-70m"  # choose from `MODEL_NAMES` in `src/constants.py`
   use_lora: True
+  use_flash_attention: True
 
 train_args:
   federated_optimizer: "FedAvg"
@@ -153,6 +154,7 @@ train_args:
   # below are the same as HuggingFace settings
   task: instruction  # choose from `finetune` and `instruction`. If set to `instruction`, will apply template to the dataset and affects loss calculation.
   deepspeed: "configs/deepspeed/ds_z3_bf16_config.json"
+  ddp_find_unused_parameters: False
   seed: 1234
   fp16: False
   bf16: False
@@ -163,17 +165,22 @@ train_args:
   eval_accumulation_steps: 4
   learning_rate: 3.0e-4
   warmup_steps: 50
-  num_train_epochs: 5  # number of training epoch for the entire training, should >= comm_round
   output_dir: ".logs/FedML/{run_id}/dolly_niid_pythia-70m"
   logging_steps: 20
   eval_steps: 200
   save_steps: 200
-  max_steps: 1000  # number of training steps for the entire training, should >= comm_round, this option overwrites `num_train_epochs`
   save_total_limit: 10
   logging_strategy: "no"
   evaluation_strategy: "no"  # should be turned off
   save_strategy: "no"
   save_on_each_node: True
+  # extra options
+  # number of training epoch for each communication round, total epoch is local_num_train_epochs * comm_round
+  local_num_train_epochs: 1
+  # number of training steps for each communication round, total step is local_max_steps * comm_round;
+  #   this option overwrites `max_steps` and `local_num_train_epochs`;
+  #   set to a non-positive value to disable it.
+  local_max_steps: 200
 
 validation_args:
   frequency_of_the_test: 1

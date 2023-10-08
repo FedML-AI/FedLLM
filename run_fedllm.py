@@ -6,6 +6,7 @@ import logging
 import math
 import os
 from pathlib import Path
+import warnings
 
 from accelerate.utils import broadcast_object_list
 from datasets import Dataset
@@ -85,6 +86,48 @@ def _parse_args(args: Arguments) -> Arguments:
 
     args.output_dir = get_real_path(args.output_dir.format(run_id=args.run_id))
     args.output_dir = str(Path(args.output_dir) / f"node_{args.rank}")
+
+    # set default value for `num_train_epochs` and `local_num_train_epochs`
+    if (
+            getattr(args, "num_train_epochs", None) is not None and
+            getattr(args, "local_num_train_epochs", None) is None
+    ):
+        # if `num_train_epochs` is present but not `local_num_train_epochs`
+        warnings.warn(
+            "`num_train_epochs` is deprecated and will be removed in future version. Use "
+            "`local_num_train_epochs` instead.",
+            FutureWarning
+        )
+        setattr(args, "local_num_train_epochs", args.num_train_epochs)
+
+    if getattr(args, "local_num_train_epochs", None) is None:
+        # set to HF default value
+        setattr(args, "local_num_train_epochs", 3.0)
+
+    # set default value for `max_steps` and `local_max_steps`
+    if (
+            getattr(args, "max_steps", None) is not None and
+            getattr(args, "local_max_steps", None) is None
+    ):
+        # if `max_steps` is present but not `local_max_steps`
+        warnings.warn(
+            "`max_steps` is deprecated and will be removed in future version. Use "
+            "`local_max_steps` instead.",
+            FutureWarning
+        )
+        setattr(args, "local_max_steps", args.max_steps)
+
+    if getattr(args, "local_max_steps", None) is None:
+        # set to HF default value
+        setattr(args, "local_max_steps", -1)
+
+    assert args.local_max_steps > 0 or args.local_num_train_epochs > 0, \
+        f"At least 1 of `local_max_steps` and `local_num_train_epochs` should be positive, " \
+        f"but got {args.local_max_steps} and {args.local_num_train_epochs}"
+
+    # update `num_train_epochs` and `max_steps`
+    setattr(args, "num_train_epochs", args.local_num_train_epochs * args.comm_round)
+    setattr(args, "max_steps", args.local_max_steps * args.comm_round)
 
     return args
 
@@ -229,30 +272,19 @@ class LLMTrainer(ClientTrainer):
             eval_dataset=test_dataset
         )
 
-        max_steps = self.trainer.args.max_steps
-        num_train_epochs = self.trainer.args.num_train_epochs
-        comm_round = int(self.args.comm_round)
-        assert max_steps > 0 or num_train_epochs > 0, \
-            f"at least 1 of max_steps and num_train_epochs should be positive, " \
-            f"but got {max_steps} and {num_train_epochs}"
-        assert max_steps <= 0 or max_steps >= comm_round, \
-            f"max_steps = {max_steps} > 0 must be greater than comm_round = {comm_round}"
+        step_threshold = self.args.local_max_steps
+        epoch_threshold = self.args.local_num_train_epochs
 
-        if max_steps > 0:
-            assert max_steps >= comm_round, f"required max_steps >= comm_round, but got {max_steps} < {comm_round}"
-            step_threshold = int(math.ceil(max_steps / comm_round))
+        if step_threshold > 0:
             epoch_threshold = math.inf
-            self.log(f"step_threshold = {step_threshold}")
-        elif num_train_epochs > 0:
-            # TODO: verify
+        elif epoch_threshold > 0:
             step_threshold = math.inf
-            epoch_threshold = num_train_epochs / comm_round
-            self.log(f"epoch_threshold = {epoch_threshold}")
         else:
             raise ValueError(
-                f"at least one of the `max_steps` and `num_train_epochs` should be positive, "
-                f"but got {max_steps} and {num_train_epochs}"
+                f"At least 1 of `local_max_steps` and `local_num_train_epochs` should be positive, "
+                f"but got {step_threshold} and {epoch_threshold}"
             )
+        self.log(f"step_threshold = {step_threshold}, epoch_threshold = {epoch_threshold}")
 
         self.trainer.add_callback(PauseResumeCallback(
             step_threshold=step_threshold,
