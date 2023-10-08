@@ -88,6 +88,14 @@ pip install -r requirements.txt
 
 See [Dependencies](#dependencies) for more information on the dependency versions.
 
+### Update the Repo
+
+Update the repo and the submodules:
+
+```shell
+git pull --recurse-submodules
+```
+
 ### Prepare Dataset
 
 Run the following command to download the example datasets.
