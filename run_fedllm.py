@@ -78,6 +78,7 @@ def _parse_args(args: Arguments) -> Arguments:
     if torch.cuda.device_count() == 0:
         logging.warning(f"{args.role} rank {args.rank} does not have GPU! Fallback to CPU mode.")
         setattr(args, "deepspeed", None)
+        setattr(args, "use_flash_attention", False)
 
     if not hasattr(args, "output_dir"):
         raise ValueError("\"output_dir\" is required in the configuration file.")
