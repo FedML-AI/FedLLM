@@ -14,6 +14,7 @@ from typing import (
 import torch
 from torch import Tensor
 from torch.nn import Module
+from torch.nn.modules.module import _IncompatibleKeys
 from transformers.deepspeed import is_deepspeed_zero3_enabled
 
 from .distributed import (
@@ -48,7 +49,7 @@ def load_state_dict(
         state_dict: Dict[str, Any],
         strict: bool = True,
         force_recursive_load: bool = False
-) -> None:
+) -> _IncompatibleKeys:
     if (is_deepspeed_initialized() and is_deepspeed_zero3_enabled() and is_deepspeed_module(model)) \
             or force_recursive_load:
         metadata = getattr(state_dict, "_metadata", None)
@@ -64,8 +65,15 @@ def load_state_dict(
             metadata=metadata,
             error_msgs=error_msgs
         )
+
+        model_keys = {n for n, _ in model.named_parameters()}
+        model_keys.update(n for n, _ in model.named_buffers())
+        return _IncompatibleKeys(
+            missing_keys=list(model_keys - state_dict.keys()),
+            unexpected_keys=list(state_dict.keys() - model_keys)
+        )
     else:
-        model.load_state_dict(state_dict, strict=strict)
+        return model.load_state_dict(state_dict, strict=strict)
 
 
 def load_state_dict_helper(

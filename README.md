@@ -355,10 +355,10 @@ We have tested our implement with the following setup:
     - `fedml>=0.8.4a7`
     - `torch>=2.0.0,<=2.0.1`
     - `torchvision>=0.15.1,<=0.15.2`
-    - `transformers>=4.29.2,<=4.31.0`
-    - `peft>=0.3.0,<=0.4.0`
-    - `datasets>=2.11.0,<=2.13.1`
-    - `deepspeed>=0.9.1,<=0.10.0`
+    - `transformers>=4.31.0,<=4.34.0`
+    - `peft>=0.4.0,<=0.5.0`
+    - `datasets>=2.11.0,<=2.14.5`
+    - `deepspeed>=0.9.1,<=0.10.2`
     - `numpy>=1.24.3,<=1.24.4`
     - `tensorboard>=2.12.2,<=2.13.0`
     - `mpi4py==3.1.4`

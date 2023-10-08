@@ -6,19 +6,19 @@ from peft import PeftModel, PeftType, PromptLearningConfig
 from .modeling_utils import load_state_dict
 
 
+# Adapted from https://github.com/huggingface/peft/blob/c33c42f1582b13e9b14b6b9467eff9275164ea36/src/peft/utils/save_and_load.py#L82
 def set_peft_model_state_dict(
         model: PeftModel,
         peft_model_state_dict,
         adapter_name: str = "default"
 ) -> None:
     """
-    Set the state dict of the Peft model. This function is adapted from `peft.set_peft_model_state_dict`
-        see https://github.com/huggingface/peft/blob/fcff23f005fc7bfb816ad1f55360442c170cd5f5/src/peft/utils/save_and_load.py#L80
+    Set the state dict of the Peft model.
 
     Args:
-        model: The Peft model.
-        peft_model_state_dict: The state dict of the Peft model.
-        adapter_name: adapter name
+        model ([`PeftModel`]): The Peft model.
+        peft_model_state_dict (`dict`): The state dict of the Peft model.
+        adapter_name: The adapter name.
     """
     config = model.peft_config[adapter_name]
     state_dict = {}
@@ -33,11 +33,12 @@ def set_peft_model_state_dict(
     else:
         state_dict = peft_model_state_dict
 
-    if config.peft_type in (PeftType.LORA, PeftType.ADALORA):
+    if config.peft_type in (PeftType.LORA, PeftType.ADALORA, PeftType.IA3):
         peft_model_state_dict = {}
+        parameter_prefix = "ia3_" if config.peft_type == PeftType.IA3 else "lora_"
         for k, v in state_dict.items():
-            if "lora_" in k:
-                suffix = k.split("lora_")[1]
+            if parameter_prefix in k:
+                suffix = k.split(parameter_prefix)[1]
                 if "." in suffix:
                     suffix_to_replace = ".".join(suffix.split(".")[1:])
                     k = k.replace(suffix_to_replace, f"{adapter_name}.{suffix_to_replace}")
@@ -55,10 +56,11 @@ def set_peft_model_state_dict(
     else:
         raise NotImplementedError
 
-    load_state_dict(model, peft_model_state_dict, strict=False)
+    load_result = load_state_dict(model, peft_model_state_dict, strict=False)
     if isinstance(config, PromptLearningConfig):
         load_state_dict(
             model.prompt_encoder[adapter_name].embedding,
-            state_dict={"weight": peft_model_state_dict["prompt_embeddings"]},
+            {"weight": peft_model_state_dict["prompt_embeddings"]},
             strict=True
         )
+    return load_result
