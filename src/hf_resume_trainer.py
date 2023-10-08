@@ -1,7 +1,10 @@
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
+from torch import Tensor
+from torch.nn import Module
 from torch.optim import Optimizer
 from transformers import (
+    EvalPrediction,
     TrainerCallback,
     TrainerControl,
     TrainerState,
@@ -10,6 +13,13 @@ from transformers import (
 from transformers.trainer_utils import TrainOutput
 
 from .hf_trainer import HFTrainer
+from .typing import (
+    DataCollatorType,
+    DatasetType,
+    LrSchedulerType,
+    ModelType,
+    TokenizerType,
+)
 from .utils import dummy_func
 
 
@@ -42,12 +52,33 @@ class HFResumeTrainerCallback(TrainerCallback):
 class HFResumeTrainer(HFTrainer):
     def __init__(
             self,
-            *pos_args,
+            model: Union[ModelType, Module] = None,
+            args: TrainingArguments = None,
+            data_collator: Optional[DataCollatorType] = None,
+            train_dataset: Optional[DatasetType] = None,
+            eval_dataset: Optional[Union[DatasetType, Dict[str, DatasetType]]] = None,
+            tokenizer: Optional[TokenizerType] = None,
+            model_init: Optional[Callable[[], Union[ModelType, Module]]] = None,
+            compute_metrics: Optional[Callable[[EvalPrediction], Dict]] = None,
+            callbacks: Optional[List[TrainerCallback]] = None,
+            optimizers: Tuple[Optimizer, LrSchedulerType] = (None, None),
+            preprocess_logits_for_metrics: Optional[Callable[[Tensor, Tensor], Tensor]] = None,
             is_resume_from_interrupt: bool = False,
-            resume_train_callback: Optional[HFResumeTrainerCallback] = None,
-            **kwargs
+            resume_train_callback: Optional[HFResumeTrainerCallback] = None
     ):
-        super().__init__(*pos_args, **kwargs)
+        super().__init__(
+            model=model,
+            args=args,
+            data_collator=data_collator,
+            train_dataset=train_dataset,
+            eval_dataset=eval_dataset,
+            tokenizer=tokenizer,
+            model_init=model_init,
+            compute_metrics=compute_metrics,
+            callbacks=callbacks,
+            optimizers=optimizers,
+            preprocess_logits_for_metrics=preprocess_logits_for_metrics
+        )
 
         # set to `True` if continuing from previous early-stopped train
         self.is_resume_from_interrupt = is_resume_from_interrupt
@@ -67,7 +98,7 @@ class HFResumeTrainer(HFTrainer):
         else:
             return self.optimizer
 
-    def create_scheduler(self, num_training_steps: int, optimizer: Optimizer = None):
+    def create_scheduler(self, num_training_steps: int, optimizer: Optional[Optimizer] = None) -> LrSchedulerType:
         if not self.is_resume_from_interrupt:
             return super().create_scheduler(num_training_steps, optimizer)
         else:
