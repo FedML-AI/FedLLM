@@ -257,8 +257,7 @@ class LLMTrainer(ClientTrainer):
             model: ModelType,
             args: Arguments,
             tokenizer: TokenizerType,
-            training_args: FinetuningArguments,
-            test_dataset: Optional[Dataset] = None
+            training_args: FinetuningArguments
     ):
         super().__init__(model, args)
 
@@ -268,8 +267,7 @@ class LLMTrainer(ClientTrainer):
             args=self.args,
             model=self.model,
             tokenizer=self.tokenizer,
-            training_args=self.training_args,
-            eval_dataset=test_dataset
+            training_args=self.training_args
         )
 
         step_threshold = self.args.local_max_steps
@@ -335,15 +333,7 @@ class LLMTrainer(ClientTrainer):
 
         outputs = super().on_before_local_training(train_data, device, args)
 
-        # update round_idx
-        if hasattr(args, "round_idx"):
-            self.round_idx = args.round_idx
-
         self.trainer.train_dataset = train_data
-
-        if self.round_idx > 0:
-            # TODO: remove once FedML integrated the change
-            self.test(self.trainer.eval_dataset, device, args)
 
         self.log("finished")
         return outputs
@@ -526,8 +516,8 @@ class LLMAggregator(ServerAggregator):
 
 def transform_data_to_fedml_format(args: Arguments, train_dataset: Dataset, test_dataset: Dataset):
     # TODO: scrutinize
-    train_data_num = 0
-    test_data_num = 0
+    train_data_num = len(train_dataset)
+    test_data_num = len(test_dataset)
     train_data_global = None
     test_data_global = None
     train_data_local_num_dict = dict()
@@ -550,7 +540,7 @@ def transform_data_to_fedml_format(args: Arguments, train_dataset: Dataset, test
         train_data_local_num_dict,
         train_data_local_dict,
         test_data_local_dict,
-        2
+        2  # num classes, this is ignored for FedLLM
     )
 
 
@@ -618,8 +608,7 @@ def main(args: Arguments) -> None:
             model=model,
             args=args,
             tokenizer=tokenizer,
-            training_args=training_args,
-            test_dataset=test_dataset
+            training_args=training_args
         )
     elif args.role == "server":
         aggregator = LLMAggregator(

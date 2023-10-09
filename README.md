@@ -193,6 +193,7 @@ train_args:
 
 validation_args:
   frequency_of_the_test: 1
+  test_on_clients: "no"  # choose from "before_aggregation" | "after_aggregation" | "no" | "both"
   is_aggregator_test: True  # set to `True` to enable testing on aggregator after each aggregation
   is_client_test: False  # set to `True` to enable testing on client after each local training round
 
