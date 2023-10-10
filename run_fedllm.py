@@ -294,6 +294,14 @@ class LLMTrainer(ClientTrainer):
             epoch_threshold=epoch_threshold
         ))
 
+        # save config
+        if should_process_save(self.trainer):
+            # save model config before training
+            save_config(model, self.checkpoint_dir / "final")
+
+        # track latest checkpoint
+        self.latest_checkpoint_dir = self.checkpoint_dir / "init"
+
         barrier()
         self.log("initialized")
 
@@ -317,7 +325,7 @@ class LLMTrainer(ClientTrainer):
     def get_model_params(self) -> OrderedDict:
         self.log("start")
 
-        peft_state_dict = load_model_state_dict(self.checkpoint_dir)
+        peft_state_dict = load_model_state_dict(self.latest_checkpoint_dir)
 
         self.log("finished")
         return OrderedDict(peft_state_dict)
@@ -355,8 +363,9 @@ class LLMTrainer(ClientTrainer):
 
         outputs = super().on_after_local_training(train_data, device, args)
 
-        self.log(f"saving model to \"{self.checkpoint_dir}\"")
-        save_model_state_dict(self.trainer)
+        self.latest_checkpoint_dir = self.checkpoint_dir / f"round_{self.round_idx}_before_agg"
+        self.log(f"saving model to \"{self.latest_checkpoint_dir}\"")
+        save_model_state_dict(self.trainer, self.latest_checkpoint_dir)
 
         self.log("finished")
         return outputs
@@ -437,7 +446,9 @@ class LLMAggregator(ServerAggregator):
         # save config
         if should_process_save(self.trainer):
             # save model config before training
-            save_config(model, self.checkpoint_dir)
+            save_config(model, self.checkpoint_dir / "final")
+
+        self.latest_checkpoint_dir = self.checkpoint_dir / "init"
 
         barrier()
         self.log("initialized")
@@ -462,7 +473,7 @@ class LLMAggregator(ServerAggregator):
     def get_model_params(self) -> OrderedDict:
         self.log("start")
 
-        peft_state_dict = load_model_state_dict(self.checkpoint_dir)
+        peft_state_dict = load_model_state_dict(self.latest_checkpoint_dir)
 
         self.log("finished")
         return OrderedDict(peft_state_dict)
@@ -482,14 +493,15 @@ class LLMAggregator(ServerAggregator):
         outputs = super().on_after_aggregation(aggregated_model_or_grad)
 
         if should_process_save(self.trainer):
-            checkpoint_dir = Path(self.checkpoint_dir) / f"round_{self.round_idx}"
-            checkpoint_dir.mkdir(parents=True, exist_ok=True)
+            self.latest_checkpoint_dir = self.checkpoint_dir / f"round_{self.round_idx}_after_agg"
+            self.latest_checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
-            self.log(f"saving aggregated model to \"{checkpoint_dir}\"")
+            self.log(f"saving aggregated model to \"{self.latest_checkpoint_dir}\"")
+
             torch.save(
                 # convert floating point data to float32
                 to_dtype(outputs, dtype=torch.float32, floating_point_only=True),
-                str(checkpoint_dir / PEFT_WEIGHTS_NAME)
+                str(self.latest_checkpoint_dir / PEFT_WEIGHTS_NAME)
             )
 
         # all process should wait
@@ -574,7 +586,7 @@ def main(args: Arguments) -> None:
         # save initial model. This is required for DeepSpeed
         save_model_state_dict(
             model_or_trainer=model,
-            checkpoint_dir=args.output_dir,
+            checkpoint_dir=Path(args.output_dir) / "init",
             is_saving_process=True
         )
         del model
