@@ -1,6 +1,7 @@
 from .llm_finetune.src.peft_utils import *
 # -----------------------------------------------------------------
 
+from torch.nn.modules.module import _IncompatibleKeys
 from peft import PeftModel, PeftType, PromptLearningConfig
 
 from .modeling_utils import load_state_dict
@@ -11,7 +12,7 @@ def set_peft_model_state_dict(
         model: PeftModel,
         peft_model_state_dict,
         adapter_name: str = "default"
-) -> None:
+) -> _IncompatibleKeys:
     """
     Set the state dict of the Peft model.
 

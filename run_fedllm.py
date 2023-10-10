@@ -18,11 +18,10 @@ from peft import get_peft_model_state_dict, PeftModel
 from peft.utils import WEIGHTS_NAME as PEFT_WEIGHTS_NAME
 import torch.cuda
 from torch.nn import Module
+from transformers import TrainingArguments
 from transformers.utils import WEIGHTS_NAME as HF_WEIGHTS_NAME
 
-from src.configurations import DatasetArguments, FinetuningArguments, ModelArguments
-from src.constants import DEFAULT_MAX_SEQ_LENGTH
-from src.dataset_utils import RESPONSE_KEY_NL
+from src.configurations import DatasetArguments, ModelArguments
 from src.distributed import (
     barrier,
     is_deepspeed_module,
@@ -133,10 +132,10 @@ def _parse_args(args: Arguments) -> Arguments:
 
 
 def get_hf_trainer(
-        args: Arguments,
         model: ModelType,
         tokenizer: TokenizerType,
-        training_args: FinetuningArguments,
+        training_args: TrainingArguments,
+        dataset_args: DatasetArguments,
         **kwargs
 ) -> FedLLMTrainer:
     return FedLLMTrainer(
@@ -144,9 +143,11 @@ def get_hf_trainer(
         tokenizer=tokenizer,
         args=training_args,
         data_collator=get_data_collator(
-            tokenizer,
-            escape_token=RESPONSE_KEY_NL if training_args.is_instruction_finetune else None,
-            pad_to_multiple_of=getattr(args, "max_seq_length", DEFAULT_MAX_SEQ_LENGTH)
+            tokenizer=tokenizer,
+            response_template=dataset_args.response_template,
+            # set to `pad_to_multiple_of` to max_seq_length so that all distributed processes share the same
+            # sequence length. This is required for computing metrics.
+            pad_to_multiple_of=dataset_args.max_seq_length
         ),
         **kwargs
     )
@@ -257,17 +258,21 @@ class LLMTrainer(ClientTrainer):
             model: ModelType,
             args: Arguments,
             tokenizer: TokenizerType,
-            training_args: FinetuningArguments
+            model_args: ModelArguments,
+            dataset_args: DatasetArguments,
+            training_args: TrainingArguments
     ):
         super().__init__(model, args)
 
         self.tokenizer = tokenizer
+        self.model_args = model_args
+        self.dataset_args = dataset_args
         self.training_args = training_args
         self.trainer = get_hf_trainer(
-            args=self.args,
             model=self.model,
             tokenizer=self.tokenizer,
-            training_args=self.training_args
+            training_args=self.training_args,
+            dataset_args=self.dataset_args
         )
 
         step_threshold = self.args.local_max_steps
@@ -299,7 +304,7 @@ class LLMTrainer(ClientTrainer):
     def is_main_process(self) -> bool:
         return is_main_process(self.trainer)
 
-    def log(self, message: str, stack_level: int = 1) -> None:
+    def log(self, message: Any, stack_level: int = 1) -> None:
         log_helper(
             message,
             prefix=f"{{{{rank={self.args.rank}, world_rank={self.trainer.args.process_index}, "
@@ -412,17 +417,21 @@ class LLMAggregator(ServerAggregator):
             model: ModelType,
             args: Arguments,
             tokenizer: TokenizerType,
-            training_args: FinetuningArguments
+            model_args: ModelArguments,
+            dataset_args: DatasetArguments,
+            training_args: TrainingArguments
     ):
         super().__init__(model, args)
 
         self.tokenizer = tokenizer
+        self.model_args = model_args
+        self.dataset_args = dataset_args
         self.training_args = training_args
         self.trainer = get_hf_trainer(
-            args=self.args,
             model=self.model,
             tokenizer=self.tokenizer,
-            training_args=self.training_args
+            training_args=self.training_args,
+            dataset_args=self.dataset_args
         )
 
         # save config
@@ -440,7 +449,7 @@ class LLMAggregator(ServerAggregator):
     def is_main_process(self) -> bool:
         return is_main_process(self.trainer)
 
-    def log(self, message: str, stack_level: int = 1) -> None:
+    def log(self, message: Any, stack_level: int = 1) -> None:
         log_helper(
             message,
             prefix=f"{{{{rank={self.args.rank}, world_rank={self.trainer.args.process_index}, "
@@ -549,14 +558,13 @@ def main(args: Arguments) -> None:
     device = fedml.device.get_device(args)
 
     model_args, dataset_args = parse_hf_args((ModelArguments, DatasetArguments), args)
-    is_instruction_finetune = getattr(args, "task", "finetune") == "instruction"
 
     if args.local_rank == 0:
         # Initialize model before initializing TrainingArgs to load the full model in memory
         # This is required when using DeepSpeed Zero3 w/ FedLLM
         model = get_model(
             model_args,
-            tokenizer_length=len(get_tokenizer(model_args, add_special_tokens=is_instruction_finetune)),
+            tokenizer_length=len(get_tokenizer(model_args)),
             use_cache=not getattr(args, "gradient_checkpointing", False)
         )
 
@@ -570,10 +578,10 @@ def main(args: Arguments) -> None:
         gc.collect()
     barrier()
 
-    training_args, *_ = parse_hf_args(FinetuningArguments, args)
+    training_args, *_ = parse_hf_args(TrainingArguments, args)
 
     # tokenizer need to be recreated after transformers.TrainingArguments to avoid serialization problems
-    tokenizer = get_tokenizer(model_args, add_special_tokens=is_instruction_finetune)
+    tokenizer = get_tokenizer(model_args)
 
     # update cross-silo hierarchical related settings
     if getattr(args, "use_customized_hierarchical", False):
@@ -608,6 +616,8 @@ def main(args: Arguments) -> None:
             model=model,
             args=args,
             tokenizer=tokenizer,
+            dataset_args=dataset_args,
+            model_args=model_args,
             training_args=training_args
         )
     elif args.role == "server":
@@ -615,6 +625,8 @@ def main(args: Arguments) -> None:
             model=model,
             args=args,
             tokenizer=tokenizer,
+            dataset_args=dataset_args,
+            model_args=model_args,
             training_args=training_args
         )
     else:
