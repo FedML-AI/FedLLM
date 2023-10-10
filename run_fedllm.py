@@ -37,7 +37,7 @@ from src.llm_finetune.run_train import (
     get_max_seq_length,
     get_tokenizer,
 )
-from src.modeling_utils import get_data_collator, to_device
+from src.modeling_utils import get_data_collator, to_device, to_dtype
 from src.peft_utils import set_peft_model_state_dict
 from src.trainer_callback import PauseResumeCallback
 from src.typing import ModelType, PathType, TokenizerType
@@ -479,20 +479,23 @@ class LLMAggregator(ServerAggregator):
         self.log("finished")
 
     def on_after_aggregation(self, aggregated_model_or_grad: OrderedDict) -> OrderedDict:
-        self.log(f"saving aggregated model to \"{self.checkpoint_dir}\"")
-        save_model_state_dict(self.trainer)
+        outputs = super().on_after_aggregation(aggregated_model_or_grad)
 
         if should_process_save(self.trainer):
             checkpoint_dir = Path(self.checkpoint_dir) / f"round_{self.round_idx}"
             checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
-            # TODO: verify, convert dtype
-            torch.save(aggregated_model_or_grad, str(checkpoint_dir / PEFT_WEIGHTS_NAME))
+            self.log(f"saving aggregated model to \"{checkpoint_dir}\"")
+            torch.save(
+                # convert floating point data to float32
+                to_dtype(outputs, dtype=torch.float32, floating_point_only=True),
+                str(checkpoint_dir / PEFT_WEIGHTS_NAME)
+            )
 
         # all process should wait
         barrier()
 
-        return super().on_after_aggregation(aggregated_model_or_grad)
+        return outputs
 
     def test(self, test_data, device, args: Arguments) -> None:
         self.log("start")
