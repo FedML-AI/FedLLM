@@ -25,14 +25,6 @@ def get_rank() -> int:
         return 0
 
 
-def is_main_process(trainer: Trainer, local: bool = False) -> bool:
-    return trainer.is_local_process_zero() if local else trainer.is_world_process_zero()
-
-
-def should_process_save(trainer: Trainer) -> bool:
-    return is_main_process(trainer, trainer.args.save_on_each_node)
-
-
 @contextmanager
 def gather_parameter(
         params: Union[Iterable[Parameter], Parameter],

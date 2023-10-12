@@ -22,12 +22,7 @@ from transformers import TrainingArguments
 from transformers.utils import WEIGHTS_NAME as HF_WEIGHTS_NAME
 
 from src.configurations import DatasetArguments, ModelArguments
-from src.distributed import (
-    barrier,
-    is_deepspeed_module,
-    is_main_process,
-    should_process_save,
-)
+from src.distributed import barrier, is_deepspeed_module
 from src.fedllm_trainer import FedLLMTrainer
 from src.hf_trainer import HFTrainer
 from src.integrations import is_deepspeed_zero3_enabled
@@ -178,7 +173,7 @@ def save_model_state_dict(
         if checkpoint_dir is None:
             checkpoint_dir = model_or_trainer.args.output_dir
         if is_saving_process is None:
-            is_saving_process = should_process_save(model_or_trainer)
+            is_saving_process = model_or_trainer.args.should_save
 
     checkpoint_dir = Path(checkpoint_dir)
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
@@ -290,7 +285,7 @@ class LLMTrainer(ClientTrainer):
         ))
 
         # save config
-        if should_process_save(self.trainer):
+        if self.training_args.should_save:
             # save model config before training
             save_config(model, self.checkpoint_dir / "final")
 
@@ -305,7 +300,7 @@ class LLMTrainer(ClientTrainer):
         return Path(self.trainer.args.output_dir)
 
     def is_main_process(self) -> bool:
-        return is_main_process(self.trainer)
+        return self.trainer.is_world_process_zero()
 
     def log(self, message: Any, stack_level: int = 1) -> None:
         log_helper(
@@ -439,7 +434,7 @@ class LLMAggregator(ServerAggregator):
         )
 
         # save config
-        if should_process_save(self.trainer):
+        if self.training_args.should_save:
             # save model config before training
             save_config(model, self.checkpoint_dir / "final")
 
@@ -453,7 +448,7 @@ class LLMAggregator(ServerAggregator):
         return Path(self.trainer.args.output_dir)
 
     def is_main_process(self) -> bool:
-        return is_main_process(self.trainer)
+        return self.trainer.is_world_process_zero()
 
     def log(self, message: Any, stack_level: int = 1) -> None:
         log_helper(
@@ -487,7 +482,7 @@ class LLMAggregator(ServerAggregator):
     def on_after_aggregation(self, aggregated_model_or_grad: OrderedDict) -> OrderedDict:
         outputs = super().on_after_aggregation(aggregated_model_or_grad)
 
-        if should_process_save(self.trainer):
+        if self.training_args.should_save:
             self.latest_checkpoint_dir = self.checkpoint_dir / f"round_{self.round_idx}_after_agg"
             self.latest_checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
