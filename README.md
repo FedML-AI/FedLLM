@@ -161,7 +161,6 @@ train_args:
   client_num_per_round: 2  # choose from 1~client_num_in_total
   comm_round: 5  # number of rounds of aggregation
   # below are the same as HuggingFace settings
-  task: instruction  # choose from `finetune` and `instruction`. If set to `instruction`, will apply template to the dataset and affects loss calculation.
   deepspeed: "configs/deepspeed/ds_z3_bf16_config.json"
   ddp_find_unused_parameters: False
   seed: 1234
@@ -193,6 +192,7 @@ train_args:
 
 validation_args:
   frequency_of_the_test: 1
+  test_on_clients: "no"  # choose from "before_aggregation" | "after_aggregation" | "no" | "both"
   is_aggregator_test: True  # set to `True` to enable testing on aggregator after each aggregation
   is_client_test: False  # set to `True` to enable testing on client after each local training round
 

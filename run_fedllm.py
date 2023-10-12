@@ -1,4 +1,4 @@
-from typing import Any, Optional, Union
+from typing import Any, Dict, Optional, Union
 
 from collections import OrderedDict
 import gc
@@ -14,24 +14,17 @@ import fedml
 from fedml import FedMLRunner, mlops
 from fedml.arguments import Arguments
 from fedml.core import ClientTrainer, ServerAggregator
-from peft import get_peft_model_state_dict, PeftModel
+from peft import PeftModel
 from peft.utils import WEIGHTS_NAME as PEFT_WEIGHTS_NAME
 import torch.cuda
 from torch.nn import Module
+from transformers import PreTrainedModel, TrainingArguments
 from transformers.utils import WEIGHTS_NAME as HF_WEIGHTS_NAME
 
-from src.configurations import DatasetArguments, FinetuningArguments, ModelArguments
-from src.constants import DEFAULT_MAX_SEQ_LENGTH
-from src.dataset_utils import RESPONSE_KEY_NL
-from src.distributed import (
-    barrier,
-    is_deepspeed_module,
-    is_main_process,
-    should_process_save,
-)
+from src.configurations import DatasetArguments, ModelArguments
+from src.distributed import barrier
 from src.fedllm_trainer import FedLLMTrainer
 from src.hf_trainer import HFTrainer
-from src.integrations import is_deepspeed_zero3_enabled
 from src.llm_finetune.run_train import (
     get_dataset,
     get_model,
@@ -133,10 +126,10 @@ def _parse_args(args: Arguments) -> Arguments:
 
 
 def get_hf_trainer(
-        args: Arguments,
         model: ModelType,
         tokenizer: TokenizerType,
-        training_args: FinetuningArguments,
+        training_args: TrainingArguments,
+        dataset_args: DatasetArguments,
         **kwargs
 ) -> FedLLMTrainer:
     return FedLLMTrainer(
@@ -144,100 +137,97 @@ def get_hf_trainer(
         tokenizer=tokenizer,
         args=training_args,
         data_collator=get_data_collator(
-            tokenizer,
-            escape_token=RESPONSE_KEY_NL if training_args.is_instruction_finetune else None,
-            pad_to_multiple_of=getattr(args, "max_seq_length", DEFAULT_MAX_SEQ_LENGTH)
+            tokenizer=tokenizer,
+            response_template=dataset_args.response_template,
+            # set to `pad_to_multiple_of` to max_seq_length so that all distributed processes share the same
+            # sequence length. This is required for computing metrics.
+            pad_to_multiple_of=dataset_args.max_seq_length
         ),
         **kwargs
     )
 
 
-def save_model_helper(model: Module, checkpoint_dir: PathType) -> None:
-    checkpoint_dir = Path(checkpoint_dir)
-    checkpoint_dir.mkdir(parents=True, exist_ok=True)
+def _save_checkpoint(
+        model: Module,
+        checkpoint_dir: PathType,
+        state_dict: Optional[Dict[str, Any]] = None
+) -> None:
+    if state_dict is None:
+        state_dict = model.state_dict()
 
-    checkpoint_path = checkpoint_dir / HF_WEIGHTS_NAME
-    peft_checkpoint_path = checkpoint_dir / PEFT_WEIGHTS_NAME
-
-    state_dict = to_device(model.state_dict(), device="cpu")
-
-    if isinstance(model, PeftModel):
-        torch.save(
-            get_peft_model_state_dict(model, state_dict=state_dict),
-            str(peft_checkpoint_path)
+    if isinstance(model, (PeftModel, PreTrainedModel)):
+        model.save_pretrained(
+            save_directory=str(checkpoint_dir),
+            state_dict=state_dict
         )
     else:
-        torch.save(state_dict, str(checkpoint_path))
+        checkpoint_dir = Path(checkpoint_dir)
+        checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        torch.save(state_dict, str(checkpoint_dir / HF_WEIGHTS_NAME))
 
-    del state_dict
-    gc.collect()
 
-
-def save_model_state_dict(
+def save_checkpoint(
         model_or_trainer: Union[HFTrainer, Module],
         checkpoint_dir: Optional[PathType] = None,
-        is_saving_process: Optional[bool] = None
+        is_saving_process: Optional[bool] = None,
+        state_dict: Optional[Dict[str, Any]] = None,
+        synchronize: bool = True
 ) -> None:
+    """
+    Save model checkpoint to a directory.
+
+    Args:
+        model_or_trainer: model or HF Trainer to save.
+        checkpoint_dir: output directory for the checkpoint.
+        is_saving_process: Whether the current process is the saving process. When this function is called on
+            multiple processes, set `is_saving_process=True` only on the main process to avoid race conditions.
+        state_dict: state_dict object to save. This overrides `model_or_trainer`.
+        synchronize: Whether to synchronize after saving the model. This is required if you want to load the
+            checkpoint immediately after saving.
+
+    Returns:
+
+    """
+    # This function need to be called on all processes
     if isinstance(model_or_trainer, HFTrainer):
         if checkpoint_dir is None:
             checkpoint_dir = model_or_trainer.args.output_dir
         if is_saving_process is None:
-            is_saving_process = should_process_save(model_or_trainer)
+            is_saving_process = model_or_trainer.args.should_save
 
-    checkpoint_dir = Path(checkpoint_dir)
-    checkpoint_dir.mkdir(parents=True, exist_ok=True)
+    # verify args
+    if checkpoint_dir is None:
+        raise ValueError(
+            f"`checkpoint_dir` is required for `model_or_trainer` type \"{type(model_or_trainer)}\"."
+        )
+    if is_saving_process is None:
+        raise ValueError(
+            f"`is_saving_process` is required for `model_or_trainer` type"
+            f" \"{type(model_or_trainer)}\"."
+        )
 
-    checkpoint_path = checkpoint_dir / HF_WEIGHTS_NAME
-    peft_checkpoint_path = checkpoint_dir / PEFT_WEIGHTS_NAME
-
+    # save model checkpoint
     if isinstance(model_or_trainer, HFTrainer):
-        model = model_or_trainer.model
-
-        if (
-                is_deepspeed_zero3_enabled() and
-                is_deepspeed_module(model) and
-                model_or_trainer.optimizer is not None
-        ):
-            # In DeepSpeed ZeRO3, huggingface Trainer saves full model checkpoint.
-            # When using Fairscale, Deepspeed or PyTorch FSDP, optimizer is only initialized during Trainer.train;
-            # to check if ZeRO3 is fully initialized, also need to check optimizer.
-            model_or_trainer.save_checkpoint(str(checkpoint_dir))
-
-        elif is_saving_process:
-            # Need to manually save full checkpoint when not using DeepSpeed.
-            save_model_helper(model, checkpoint_dir)
+        model_or_trainer.save_checkpoint(checkpoint_dir)
 
     elif isinstance(model_or_trainer, Module):
-        model = model_or_trainer
-
-        save_model_helper(model, checkpoint_dir)
+        if is_saving_process:
+            _save_checkpoint(model_or_trainer, checkpoint_dir, state_dict)
 
     else:
         raise TypeError(f"\"{type(model_or_trainer)}\" is not a supported type.")
 
-    barrier()
-
-    # save PEFT model if do not exist
-    if is_saving_process and isinstance(model, PeftModel) and not is_file(peft_checkpoint_path):
-        state_dict = torch.load(str(checkpoint_path), map_location="cpu")
-
-        torch.save(
-            get_peft_model_state_dict(model, state_dict=state_dict),
-            str(peft_checkpoint_path)
-        )
-
-        del state_dict
-        gc.collect()
-
-    # all process should wait
-    barrier()
+    if synchronize:
+        # all process should wait
+        barrier()
 
 
-def load_model_state_dict(checkpoint_dir: PathType) -> OrderedDict:
+def load_checkpoint(checkpoint_dir: PathType) -> OrderedDict:
     checkpoint_dir = Path(checkpoint_dir)
     checkpoint_path = checkpoint_dir / HF_WEIGHTS_NAME
     peft_checkpoint_path = checkpoint_dir / PEFT_WEIGHTS_NAME
 
+    # TODO: support HF sharded checkpoints, see `transformers.utils.WEIGHTS_INDEX_NAME`
     if is_file(peft_checkpoint_path):
         state_dict = torch.load(str(peft_checkpoint_path), map_location="cpu")
     elif is_file(checkpoint_path):
@@ -257,19 +247,21 @@ class LLMTrainer(ClientTrainer):
             model: ModelType,
             args: Arguments,
             tokenizer: TokenizerType,
-            training_args: FinetuningArguments,
-            test_dataset: Optional[Dataset] = None
+            model_args: ModelArguments,
+            dataset_args: DatasetArguments,
+            training_args: TrainingArguments
     ):
         super().__init__(model, args)
 
         self.tokenizer = tokenizer
+        self.model_args = model_args
+        self.dataset_args = dataset_args
         self.training_args = training_args
         self.trainer = get_hf_trainer(
-            args=self.args,
             model=self.model,
             tokenizer=self.tokenizer,
             training_args=self.training_args,
-            eval_dataset=test_dataset
+            dataset_args=self.dataset_args
         )
 
         step_threshold = self.args.local_max_steps
@@ -291,6 +283,14 @@ class LLMTrainer(ClientTrainer):
             epoch_threshold=epoch_threshold
         ))
 
+        # save config
+        if self.training_args.should_save:
+            # save model config before training
+            save_config(model, self.checkpoint_dir / "final")
+
+        # track latest checkpoint
+        self.latest_checkpoint_dir = self.checkpoint_dir / "init"
+
         barrier()
         self.log("initialized")
 
@@ -299,9 +299,9 @@ class LLMTrainer(ClientTrainer):
         return Path(self.trainer.args.output_dir)
 
     def is_main_process(self) -> bool:
-        return is_main_process(self.trainer)
+        return self.trainer.is_world_process_zero()
 
-    def log(self, message: str, stack_level: int = 1) -> None:
+    def log(self, message: Any, stack_level: int = 1) -> None:
         log_helper(
             message,
             prefix=f"{{{{rank={self.args.rank}, world_rank={self.trainer.args.process_index}, "
@@ -314,7 +314,7 @@ class LLMTrainer(ClientTrainer):
     def get_model_params(self) -> OrderedDict:
         self.log("start")
 
-        peft_state_dict = load_model_state_dict(self.checkpoint_dir)
+        peft_state_dict = load_checkpoint(self.latest_checkpoint_dir)
 
         self.log("finished")
         return OrderedDict(peft_state_dict)
@@ -335,15 +335,7 @@ class LLMTrainer(ClientTrainer):
 
         outputs = super().on_before_local_training(train_data, device, args)
 
-        # update round_idx
-        if hasattr(args, "round_idx"):
-            self.round_idx = args.round_idx
-
         self.trainer.train_dataset = train_data
-
-        if self.round_idx > 0:
-            # TODO: remove once FedML integrated the change
-            self.test(self.trainer.eval_dataset, device, args)
 
         self.log("finished")
         return outputs
@@ -360,8 +352,9 @@ class LLMTrainer(ClientTrainer):
 
         outputs = super().on_after_local_training(train_data, device, args)
 
-        self.log(f"saving model to \"{self.checkpoint_dir}\"")
-        save_model_state_dict(self.trainer)
+        self.latest_checkpoint_dir = self.checkpoint_dir / f"round_{self.round_idx}_before_agg"
+        self.log(f"saving model to \"{self.latest_checkpoint_dir}\"")
+        save_checkpoint(self.trainer, self.latest_checkpoint_dir)
 
         self.log("finished")
         return outputs
@@ -422,23 +415,29 @@ class LLMAggregator(ServerAggregator):
             model: ModelType,
             args: Arguments,
             tokenizer: TokenizerType,
-            training_args: FinetuningArguments
+            model_args: ModelArguments,
+            dataset_args: DatasetArguments,
+            training_args: TrainingArguments
     ):
         super().__init__(model, args)
 
         self.tokenizer = tokenizer
+        self.model_args = model_args
+        self.dataset_args = dataset_args
         self.training_args = training_args
         self.trainer = get_hf_trainer(
-            args=self.args,
             model=self.model,
             tokenizer=self.tokenizer,
-            training_args=self.training_args
+            training_args=self.training_args,
+            dataset_args=self.dataset_args
         )
 
         # save config
-        if should_process_save(self.trainer):
+        if self.training_args.should_save:
             # save model config before training
-            save_config(model, self.checkpoint_dir)
+            save_config(model, self.checkpoint_dir / "final")
+
+        self.latest_checkpoint_dir = self.checkpoint_dir / "init"
 
         barrier()
         self.log("initialized")
@@ -448,9 +447,9 @@ class LLMAggregator(ServerAggregator):
         return Path(self.trainer.args.output_dir)
 
     def is_main_process(self) -> bool:
-        return is_main_process(self.trainer)
+        return self.trainer.is_world_process_zero()
 
-    def log(self, message: str, stack_level: int = 1) -> None:
+    def log(self, message: Any, stack_level: int = 1) -> None:
         log_helper(
             message,
             prefix=f"{{{{rank={self.args.rank}, world_rank={self.trainer.args.process_index}, "
@@ -463,7 +462,7 @@ class LLMAggregator(ServerAggregator):
     def get_model_params(self) -> OrderedDict:
         self.log("start")
 
-        peft_state_dict = load_model_state_dict(self.checkpoint_dir)
+        peft_state_dict = load_checkpoint(self.latest_checkpoint_dir)
 
         self.log("finished")
         return OrderedDict(peft_state_dict)
@@ -480,20 +479,22 @@ class LLMAggregator(ServerAggregator):
         self.log("finished")
 
     def on_after_aggregation(self, aggregated_model_or_grad: OrderedDict) -> OrderedDict:
-        self.log(f"saving aggregated model to \"{self.checkpoint_dir}\"")
-        save_model_state_dict(self.trainer)
+        outputs = super().on_after_aggregation(aggregated_model_or_grad)
 
-        if should_process_save(self.trainer):
-            checkpoint_dir = Path(self.checkpoint_dir) / f"round_{self.round_idx}"
-            checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        self.latest_checkpoint_dir = self.checkpoint_dir / f"round_{self.round_idx}_after_agg"
 
-            # TODO: verify, convert dtype
-            torch.save(aggregated_model_or_grad, str(checkpoint_dir / PEFT_WEIGHTS_NAME))
+        self.log(f"saving aggregated model to \"{self.latest_checkpoint_dir}\"")
+        save_checkpoint(
+            self.model,
+            self.latest_checkpoint_dir,
+            is_saving_process=self.training_args.should_save,
+            state_dict=outputs
+        )
 
         # all process should wait
         barrier()
 
-        return super().on_after_aggregation(aggregated_model_or_grad)
+        return outputs
 
     def test(self, test_data, device, args: Arguments) -> None:
         self.log("start")
@@ -526,8 +527,8 @@ class LLMAggregator(ServerAggregator):
 
 def transform_data_to_fedml_format(args: Arguments, train_dataset: Dataset, test_dataset: Dataset):
     # TODO: scrutinize
-    train_data_num = 0
-    test_data_num = 0
+    train_data_num = len(train_dataset)
+    test_data_num = len(test_dataset)
     train_data_global = None
     test_data_global = None
     train_data_local_num_dict = dict()
@@ -550,7 +551,7 @@ def transform_data_to_fedml_format(args: Arguments, train_dataset: Dataset, test
         train_data_local_num_dict,
         train_data_local_dict,
         test_data_local_dict,
-        2
+        2  # num classes, this is ignored for FedLLM
     )
 
 
@@ -559,31 +560,31 @@ def main(args: Arguments) -> None:
     device = fedml.device.get_device(args)
 
     model_args, dataset_args = parse_hf_args((ModelArguments, DatasetArguments), args)
-    is_instruction_finetune = getattr(args, "task", "finetune") == "instruction"
 
     if args.local_rank == 0:
         # Initialize model before initializing TrainingArgs to load the full model in memory
         # This is required when using DeepSpeed Zero3 w/ FedLLM
         model = get_model(
             model_args,
-            tokenizer_length=len(get_tokenizer(model_args, add_special_tokens=is_instruction_finetune)),
+            tokenizer_length=len(get_tokenizer(model_args)),
             use_cache=not getattr(args, "gradient_checkpointing", False)
         )
 
         # save initial model. This is required for DeepSpeed
-        save_model_state_dict(
+        save_checkpoint(
             model_or_trainer=model,
-            checkpoint_dir=args.output_dir,
-            is_saving_process=True
+            checkpoint_dir=Path(args.output_dir) / "init",
+            is_saving_process=True,
+            synchronize=False  # do not synchronize here
         )
         del model
         gc.collect()
     barrier()
 
-    training_args, *_ = parse_hf_args(FinetuningArguments, args)
+    training_args, *_ = parse_hf_args(TrainingArguments, args)
 
     # tokenizer need to be recreated after transformers.TrainingArguments to avoid serialization problems
-    tokenizer = get_tokenizer(model_args, add_special_tokens=is_instruction_finetune)
+    tokenizer = get_tokenizer(model_args)
 
     # update cross-silo hierarchical related settings
     if getattr(args, "use_customized_hierarchical", False):
@@ -618,14 +619,17 @@ def main(args: Arguments) -> None:
             model=model,
             args=args,
             tokenizer=tokenizer,
-            training_args=training_args,
-            test_dataset=test_dataset
+            dataset_args=dataset_args,
+            model_args=model_args,
+            training_args=training_args
         )
     elif args.role == "server":
         aggregator = LLMAggregator(
             model=model,
             args=args,
             tokenizer=tokenizer,
+            dataset_args=dataset_args,
+            model_args=model_args,
             training_args=training_args
         )
     else:
