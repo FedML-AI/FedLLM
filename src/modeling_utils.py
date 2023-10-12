@@ -27,7 +27,7 @@ from .integrations import is_deepspeed_zero3_enabled
 T = TypeVar("T")
 
 
-def to_device(data: T, device: Union[torch.device, str], non_blocking: bool = True) -> T:
+def to_device(data: T, device: Union[torch.device, str], non_blocking: bool = False) -> T:
     if isinstance(data, list):
         data = [to_device(d, device, non_blocking) for d in data]
 
@@ -39,7 +39,7 @@ def to_device(data: T, device: Union[torch.device, str], non_blocking: bool = Tr
             data[k] = to_device(data[k], device, non_blocking)
 
     elif isinstance(data, (Tensor, Parameter, Module)):
-        data = data.to(device, non_blocking=non_blocking)
+        data = data.to(device=device, non_blocking=non_blocking)
 
     return data
 
@@ -47,7 +47,7 @@ def to_device(data: T, device: Union[torch.device, str], non_blocking: bool = Tr
 def to_dtype(
         data: T,
         dtype: Union[torch.dtype, str],
-        non_blocking: bool = True,
+        non_blocking: bool = False,
         floating_point_only: bool = True
 ) -> T:
     if isinstance(data, list):
@@ -61,7 +61,7 @@ def to_dtype(
             data[k] = to_dtype(data[k], dtype, non_blocking, floating_point_only)
 
     elif isinstance(data, (Tensor, Parameter)) and not floating_point_only or data.dtype.is_floating_point:
-        data = data.to(dtype, non_blocking=non_blocking)
+        data = data.to(dtype=dtype, non_blocking=non_blocking)
 
     return data
 

@@ -160,18 +160,13 @@ def save_model_helper(model: Module, checkpoint_dir: PathType) -> None:
     checkpoint_path = checkpoint_dir / HF_WEIGHTS_NAME
     peft_checkpoint_path = checkpoint_dir / PEFT_WEIGHTS_NAME
 
-    state_dict = to_device(model.state_dict(), device="cpu")
-
     if isinstance(model, PeftModel):
         torch.save(
-            get_peft_model_state_dict(model, state_dict=state_dict),
+            get_peft_model_state_dict(model, state_dict=model.state_dict()),
             str(peft_checkpoint_path)
         )
     else:
-        torch.save(state_dict, str(checkpoint_path))
-
-    del state_dict
-    gc.collect()
+        torch.save(model.state_dict(), str(checkpoint_path))
 
 
 def save_model_state_dict(
