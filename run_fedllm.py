@@ -1,4 +1,4 @@
-from typing import Any, Optional, Union
+from typing import Any, Dict, Optional, Union
 
 from collections import OrderedDict
 import gc
@@ -14,15 +14,15 @@ import fedml
 from fedml import FedMLRunner, mlops
 from fedml.arguments import Arguments
 from fedml.core import ClientTrainer, ServerAggregator
-from peft import get_peft_model_state_dict, PeftModel
+from peft import PeftModel
 from peft.utils import WEIGHTS_NAME as PEFT_WEIGHTS_NAME
 import torch.cuda
 from torch.nn import Module
-from transformers import TrainingArguments
+from transformers import PreTrainedModel, TrainingArguments
 from transformers.utils import WEIGHTS_NAME as HF_WEIGHTS_NAME
 
 from src.configurations import DatasetArguments, ModelArguments
-from src.distributed import barrier, is_deepspeed_module
+from src.distributed import barrier
 from src.fedllm_trainer import FedLLMTrainer
 from src.hf_trainer import HFTrainer
 from src.llm_finetune.run_train import (
@@ -31,7 +31,7 @@ from src.llm_finetune.run_train import (
     get_max_seq_length,
     get_tokenizer,
 )
-from src.modeling_utils import get_data_collator, to_device, to_dtype
+from src.modeling_utils import get_data_collator, to_device
 from src.peft_utils import set_peft_model_state_dict
 from src.trainer_callback import PauseResumeCallback
 from src.typing import ModelType, PathType, TokenizerType
@@ -147,27 +147,48 @@ def get_hf_trainer(
     )
 
 
-def save_model_helper(model: Module, checkpoint_dir: PathType) -> None:
-    checkpoint_dir = Path(checkpoint_dir)
-    checkpoint_dir.mkdir(parents=True, exist_ok=True)
+def _save_checkpoint(
+        model: Module,
+        checkpoint_dir: PathType,
+        state_dict: Optional[Dict[str, Any]] = None
+) -> None:
+    if state_dict is None:
+        state_dict = model.state_dict()
 
-    checkpoint_path = checkpoint_dir / HF_WEIGHTS_NAME
-    peft_checkpoint_path = checkpoint_dir / PEFT_WEIGHTS_NAME
-
-    if isinstance(model, PeftModel):
-        torch.save(
-            get_peft_model_state_dict(model, state_dict=model.state_dict()),
-            str(peft_checkpoint_path)
+    if isinstance(model, (PeftModel, PreTrainedModel)):
+        model.save_pretrained(
+            save_directory=str(checkpoint_dir),
+            state_dict=state_dict
         )
     else:
-        torch.save(model.state_dict(), str(checkpoint_path))
+        checkpoint_dir = Path(checkpoint_dir)
+        checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        torch.save(state_dict, str(checkpoint_dir / HF_WEIGHTS_NAME))
 
 
-def save_model_state_dict(
+def save_checkpoint(
         model_or_trainer: Union[HFTrainer, Module],
         checkpoint_dir: Optional[PathType] = None,
-        is_saving_process: Optional[bool] = None
+        is_saving_process: Optional[bool] = None,
+        state_dict: Optional[Dict[str, Any]] = None,
+        synchronize: bool = True
 ) -> None:
+    """
+    Save model checkpoint to a directory.
+
+    Args:
+        model_or_trainer: model or HF Trainer to save.
+        checkpoint_dir: output directory for the checkpoint.
+        is_saving_process: Whether the current process is the saving process. When this function is called on
+            multiple processes, set `is_saving_process=True` only on the main process to avoid race conditions.
+        state_dict: state_dict object to save. This overrides `model_or_trainer`.
+        synchronize: Whether to synchronize after saving the model. This is required if you want to load the
+            checkpoint immediately after saving.
+
+    Returns:
+
+    """
+    # This function need to be called on all processes
     if isinstance(model_or_trainer, HFTrainer):
         if checkpoint_dir is None:
             checkpoint_dir = model_or_trainer.args.output_dir
@@ -177,11 +198,12 @@ def save_model_state_dict(
     # verify args
     if checkpoint_dir is None:
         raise ValueError(
-            f"`checkpoint_dir` cannot be None for `model_or_trainer` type \"{type(model_or_trainer)}\"."
+            f"`checkpoint_dir` is required for `model_or_trainer` type \"{type(model_or_trainer)}\"."
         )
     if is_saving_process is None:
         raise ValueError(
-            f"`is_saving_process` cannot be None for `model_or_trainer` type \"{type(model_or_trainer)}\"."
+            f"`is_saving_process` is required for `model_or_trainer` type"
+            f" \"{type(model_or_trainer)}\"."
         )
 
     # save model checkpoint
@@ -190,20 +212,22 @@ def save_model_state_dict(
 
     elif isinstance(model_or_trainer, Module):
         if is_saving_process:
-            save_model_helper(model_or_trainer, checkpoint_dir)
+            _save_checkpoint(model_or_trainer, checkpoint_dir, state_dict)
 
     else:
         raise TypeError(f"\"{type(model_or_trainer)}\" is not a supported type.")
 
-    # all process should wait
-    barrier()
+    if synchronize:
+        # all process should wait
+        barrier()
 
 
-def load_model_state_dict(checkpoint_dir: PathType) -> OrderedDict:
+def load_checkpoint(checkpoint_dir: PathType) -> OrderedDict:
     checkpoint_dir = Path(checkpoint_dir)
     checkpoint_path = checkpoint_dir / HF_WEIGHTS_NAME
     peft_checkpoint_path = checkpoint_dir / PEFT_WEIGHTS_NAME
 
+    # TODO: support HF sharded checkpoints, see `transformers.utils.WEIGHTS_INDEX_NAME`
     if is_file(peft_checkpoint_path):
         state_dict = torch.load(str(peft_checkpoint_path), map_location="cpu")
     elif is_file(checkpoint_path):
@@ -290,7 +314,7 @@ class LLMTrainer(ClientTrainer):
     def get_model_params(self) -> OrderedDict:
         self.log("start")
 
-        peft_state_dict = load_model_state_dict(self.latest_checkpoint_dir)
+        peft_state_dict = load_checkpoint(self.latest_checkpoint_dir)
 
         self.log("finished")
         return OrderedDict(peft_state_dict)
@@ -330,7 +354,7 @@ class LLMTrainer(ClientTrainer):
 
         self.latest_checkpoint_dir = self.checkpoint_dir / f"round_{self.round_idx}_before_agg"
         self.log(f"saving model to \"{self.latest_checkpoint_dir}\"")
-        save_model_state_dict(self.trainer, self.latest_checkpoint_dir)
+        save_checkpoint(self.trainer, self.latest_checkpoint_dir)
 
         self.log("finished")
         return outputs
@@ -438,7 +462,7 @@ class LLMAggregator(ServerAggregator):
     def get_model_params(self) -> OrderedDict:
         self.log("start")
 
-        peft_state_dict = load_model_state_dict(self.latest_checkpoint_dir)
+        peft_state_dict = load_checkpoint(self.latest_checkpoint_dir)
 
         self.log("finished")
         return OrderedDict(peft_state_dict)
@@ -457,17 +481,15 @@ class LLMAggregator(ServerAggregator):
     def on_after_aggregation(self, aggregated_model_or_grad: OrderedDict) -> OrderedDict:
         outputs = super().on_after_aggregation(aggregated_model_or_grad)
 
-        if self.training_args.should_save:
-            self.latest_checkpoint_dir = self.checkpoint_dir / f"round_{self.round_idx}_after_agg"
-            self.latest_checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        self.latest_checkpoint_dir = self.checkpoint_dir / f"round_{self.round_idx}_after_agg"
 
-            self.log(f"saving aggregated model to \"{self.latest_checkpoint_dir}\"")
-
-            torch.save(
-                # convert floating point data to float32
-                to_dtype(outputs, dtype=torch.float32, floating_point_only=True),
-                str(self.latest_checkpoint_dir / PEFT_WEIGHTS_NAME)
-            )
+        self.log(f"saving aggregated model to \"{self.latest_checkpoint_dir}\"")
+        save_checkpoint(
+            self.model,
+            self.latest_checkpoint_dir,
+            is_saving_process=self.training_args.should_save,
+            state_dict=outputs
+        )
 
         # all process should wait
         barrier()
@@ -549,10 +571,11 @@ def main(args: Arguments) -> None:
         )
 
         # save initial model. This is required for DeepSpeed
-        save_model_state_dict(
+        save_checkpoint(
             model_or_trainer=model,
             checkpoint_dir=Path(args.output_dir) / "init",
-            is_saving_process=True
+            is_saving_process=True,
+            synchronize=False  # do not synchronize here
         )
         del model
         gc.collect()
