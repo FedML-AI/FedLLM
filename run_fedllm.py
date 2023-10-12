@@ -25,7 +25,6 @@ from src.configurations import DatasetArguments, ModelArguments
 from src.distributed import barrier, is_deepspeed_module
 from src.fedllm_trainer import FedLLMTrainer
 from src.hf_trainer import HFTrainer
-from src.integrations import is_deepspeed_zero3_enabled
 from src.llm_finetune.run_train import (
     get_dataset,
     get_model,
@@ -175,50 +174,26 @@ def save_model_state_dict(
         if is_saving_process is None:
             is_saving_process = model_or_trainer.args.should_save
 
-    checkpoint_dir = Path(checkpoint_dir)
-    checkpoint_dir.mkdir(parents=True, exist_ok=True)
+    # verify args
+    if checkpoint_dir is None:
+        raise ValueError(
+            f"`checkpoint_dir` cannot be None for `model_or_trainer` type \"{type(model_or_trainer)}\"."
+        )
+    if is_saving_process is None:
+        raise ValueError(
+            f"`is_saving_process` cannot be None for `model_or_trainer` type \"{type(model_or_trainer)}\"."
+        )
 
-    checkpoint_path = checkpoint_dir / HF_WEIGHTS_NAME
-    peft_checkpoint_path = checkpoint_dir / PEFT_WEIGHTS_NAME
-
+    # save model checkpoint
     if isinstance(model_or_trainer, HFTrainer):
-        model = model_or_trainer.model
-
-        if (
-                is_deepspeed_zero3_enabled() and
-                is_deepspeed_module(model) and
-                model_or_trainer.optimizer is not None
-        ):
-            # In DeepSpeed ZeRO3, huggingface Trainer saves full model checkpoint.
-            # When using Fairscale, Deepspeed or PyTorch FSDP, optimizer is only initialized during Trainer.train;
-            # to check if ZeRO3 is fully initialized, also need to check optimizer.
-            model_or_trainer.save_checkpoint(str(checkpoint_dir))
-
-        elif is_saving_process:
-            # Need to manually save full checkpoint when not using DeepSpeed.
-            save_model_helper(model, checkpoint_dir)
+        model_or_trainer.save_checkpoint(checkpoint_dir)
 
     elif isinstance(model_or_trainer, Module):
-        model = model_or_trainer
-
-        save_model_helper(model, checkpoint_dir)
+        if is_saving_process:
+            save_model_helper(model_or_trainer, checkpoint_dir)
 
     else:
         raise TypeError(f"\"{type(model_or_trainer)}\" is not a supported type.")
-
-    barrier()
-
-    # save PEFT model if do not exist
-    if is_saving_process and isinstance(model, PeftModel) and not is_file(peft_checkpoint_path):
-        state_dict = torch.load(str(checkpoint_path), map_location="cpu")
-
-        torch.save(
-            get_peft_model_state_dict(model, state_dict=state_dict),
-            str(peft_checkpoint_path)
-        )
-
-        del state_dict
-        gc.collect()
 
     # all process should wait
     barrier()
