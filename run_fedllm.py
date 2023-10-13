@@ -583,33 +583,34 @@ def main(args: Arguments) -> None:
 
     training_args, *_ = parse_hf_args(TrainingArguments, args)
 
-    # tokenizer need to be recreated after transformers.TrainingArguments to avoid serialization problems
-    tokenizer = get_tokenizer(model_args)
-
     # update cross-silo hierarchical related settings
     if getattr(args, "use_customized_hierarchical", False):
         setattr(args, "proc_rank_in_silo", training_args.process_index)
         setattr(args, "rank_in_node", training_args.local_process_index)
         setattr(args, "process_id", training_args.process_index)
 
+    # tokenizer need to be recreated after `transformers.TrainingArguments` to avoid serialization problems
+    tokenizer = get_tokenizer(model_args)
+
     model = get_model(
         model_args,
         tokenizer_length=len(tokenizer),
-        use_cache=not getattr(args, "gradient_checkpointing", False)
+        use_cache=not training_args.gradient_checkpointing
     )
 
     if dataset_args.max_seq_length is None:
         dataset_args.max_seq_length = get_max_seq_length(model)
         setattr(args, "max_seq_length", dataset_args.max_seq_length)
 
+    # load data
     with training_args.main_process_first():
-        train_dataset, test_dataset = get_dataset(
+        train_dataset, test_dataset, *_ = get_dataset(
             dataset_args=dataset_args,
             tokenizer=tokenizer,
-            seed=args.seed
+            seed=training_args.seed,
+            is_local_main_process=training_args.local_process_index == 0
         )
 
-    # load data
     dataset = transform_data_to_fedml_format(args, train_dataset, test_dataset)
 
     # FedML trainer
