@@ -125,31 +125,6 @@ def _parse_args(args: Arguments) -> Arguments:
     return args
 
 
-def get_hf_trainer(
-        model: ModelType,
-        tokenizer: TokenizerType,
-        training_args: TrainingArguments,
-        model_args: ModelArguments,
-        dataset_args: DatasetArguments,
-        **kwargs
-) -> FedLLMTrainer:
-    return FedLLMTrainer(
-        model=model,
-        tokenizer=tokenizer,
-        args=training_args,
-        model_args=model_args,
-        dataset_args=dataset_args,
-        data_collator=get_data_collator(
-            tokenizer=tokenizer,
-            response_template=dataset_args.response_template,
-            # set to `pad_to_multiple_of` to max_seq_length so that all distributed processes share the same
-            # sequence length. This is required for computing metrics.
-            pad_to_multiple_of=dataset_args.max_seq_length
-        ),
-        **kwargs
-    )
-
-
 def _save_checkpoint(
         model: Module,
         checkpoint_dir: PathType,
@@ -260,12 +235,19 @@ class LLMTrainer(ClientTrainer):
         self.training_args = training_args
         self.model_args = model_args
         self.dataset_args = dataset_args
-        self.trainer = get_hf_trainer(
+        self.trainer = FedLLMTrainer(
             model=self.model,
             tokenizer=self.tokenizer,
-            training_args=self.training_args,
+            args=self.training_args,
             model_args=self.model_args,
-            dataset_args=self.dataset_args
+            dataset_args=self.dataset_args,
+            data_collator=get_data_collator(
+                tokenizer=self.tokenizer,
+                response_template=self.dataset_args.response_template,
+                # set to `pad_to_multiple_of` to max_seq_length so that all distributed processes share the same
+                # sequence length. This is required for computing metrics.
+                pad_to_multiple_of=self.dataset_args.max_seq_length
+            )
         )
 
         step_threshold = self.args.local_max_steps
@@ -429,12 +411,19 @@ class LLMAggregator(ServerAggregator):
         self.model_args = model_args
         self.dataset_args = dataset_args
         self.training_args = training_args
-        self.trainer = get_hf_trainer(
+        self.trainer = FedLLMTrainer(
             model=self.model,
             tokenizer=self.tokenizer,
-            training_args=self.training_args,
+            args=self.training_args,
             model_args=self.model_args,
-            dataset_args=self.dataset_args
+            dataset_args=self.dataset_args,
+            data_collator=get_data_collator(
+                tokenizer=self.tokenizer,
+                response_template=self.dataset_args.response_template,
+                # set to `pad_to_multiple_of` to max_seq_length so that all distributed processes share the same
+                # sequence length. This is required for computing metrics.
+                pad_to_multiple_of=self.dataset_args.max_seq_length
+            )
         )
 
         # save config
