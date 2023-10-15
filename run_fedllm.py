@@ -129,6 +129,7 @@ def get_hf_trainer(
         model: ModelType,
         tokenizer: TokenizerType,
         training_args: TrainingArguments,
+        model_args: ModelArguments,
         dataset_args: DatasetArguments,
         **kwargs
 ) -> FedLLMTrainer:
@@ -136,6 +137,8 @@ def get_hf_trainer(
         model=model,
         tokenizer=tokenizer,
         args=training_args,
+        model_args=model_args,
+        dataset_args=dataset_args,
         data_collator=get_data_collator(
             tokenizer=tokenizer,
             response_template=dataset_args.response_template,
@@ -247,20 +250,21 @@ class LLMTrainer(ClientTrainer):
             model: ModelType,
             args: Arguments,
             tokenizer: TokenizerType,
+            training_args: TrainingArguments,
             model_args: ModelArguments,
-            dataset_args: DatasetArguments,
-            training_args: TrainingArguments
+            dataset_args: DatasetArguments
     ):
         super().__init__(model, args)
 
         self.tokenizer = tokenizer
+        self.training_args = training_args
         self.model_args = model_args
         self.dataset_args = dataset_args
-        self.training_args = training_args
         self.trainer = get_hf_trainer(
             model=self.model,
             tokenizer=self.tokenizer,
             training_args=self.training_args,
+            model_args=self.model_args,
             dataset_args=self.dataset_args
         )
 
@@ -415,9 +419,9 @@ class LLMAggregator(ServerAggregator):
             model: ModelType,
             args: Arguments,
             tokenizer: TokenizerType,
+            training_args: TrainingArguments,
             model_args: ModelArguments,
-            dataset_args: DatasetArguments,
-            training_args: TrainingArguments
+            dataset_args: DatasetArguments
     ):
         super().__init__(model, args)
 
@@ -429,6 +433,7 @@ class LLMAggregator(ServerAggregator):
             model=self.model,
             tokenizer=self.tokenizer,
             training_args=self.training_args,
+            model_args=self.model_args,
             dataset_args=self.dataset_args
         )
 
@@ -620,18 +625,18 @@ def main(args: Arguments) -> None:
             model=model,
             args=args,
             tokenizer=tokenizer,
-            dataset_args=dataset_args,
+            training_args=training_args,
             model_args=model_args,
-            training_args=training_args
+            dataset_args=dataset_args
         )
     elif args.role == "server":
         aggregator = LLMAggregator(
             model=model,
             args=args,
             tokenizer=tokenizer,
-            dataset_args=dataset_args,
+            training_args=training_args,
             model_args=model_args,
-            training_args=training_args
+            dataset_args=dataset_args
         )
     else:
         raise RuntimeError(f"Invalid value for \"role\". Only \"client\" and \"server\" "
