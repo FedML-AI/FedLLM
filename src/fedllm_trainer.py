@@ -12,6 +12,7 @@ from transformers import (
 )
 from transformers.trainer_utils import TrainOutput
 
+from .configurations import DatasetArguments, ModelArguments
 from .hf_trainer import HFTrainer
 from .typing import (
     DataCollatorType,
@@ -54,6 +55,8 @@ class FedLLMTrainer(HFTrainer):
             self,
             model: Union[ModelType, Module] = None,
             args: TrainingArguments = None,
+            model_args: ModelArguments = None,
+            dataset_args: DatasetArguments = None,
             data_collator: Optional[DataCollatorType] = None,
             train_dataset: Optional[DatasetType] = None,
             eval_dataset: Optional[Union[DatasetType, Dict[str, DatasetType]]] = None,
@@ -69,6 +72,8 @@ class FedLLMTrainer(HFTrainer):
         super().__init__(
             model=model,
             args=args,
+            model_args=model_args,
+            dataset_args=dataset_args,
             data_collator=data_collator,
             train_dataset=train_dataset,
             eval_dataset=eval_dataset,

@@ -125,28 +125,6 @@ def _parse_args(args: Arguments) -> Arguments:
     return args
 
 
-def get_hf_trainer(
-        model: ModelType,
-        tokenizer: TokenizerType,
-        training_args: TrainingArguments,
-        dataset_args: DatasetArguments,
-        **kwargs
-) -> FedLLMTrainer:
-    return FedLLMTrainer(
-        model=model,
-        tokenizer=tokenizer,
-        args=training_args,
-        data_collator=get_data_collator(
-            tokenizer=tokenizer,
-            response_template=dataset_args.response_template,
-            # set to `pad_to_multiple_of` to max_seq_length so that all distributed processes share the same
-            # sequence length. This is required for computing metrics.
-            pad_to_multiple_of=dataset_args.max_seq_length
-        ),
-        **kwargs
-    )
-
-
 def _save_checkpoint(
         model: Module,
         checkpoint_dir: PathType,
@@ -247,21 +225,29 @@ class LLMTrainer(ClientTrainer):
             model: ModelType,
             args: Arguments,
             tokenizer: TokenizerType,
+            training_args: TrainingArguments,
             model_args: ModelArguments,
-            dataset_args: DatasetArguments,
-            training_args: TrainingArguments
+            dataset_args: DatasetArguments
     ):
         super().__init__(model, args)
 
         self.tokenizer = tokenizer
+        self.training_args = training_args
         self.model_args = model_args
         self.dataset_args = dataset_args
-        self.training_args = training_args
-        self.trainer = get_hf_trainer(
+        self.trainer = FedLLMTrainer(
             model=self.model,
             tokenizer=self.tokenizer,
-            training_args=self.training_args,
-            dataset_args=self.dataset_args
+            args=self.training_args,
+            model_args=self.model_args,
+            dataset_args=self.dataset_args,
+            data_collator=get_data_collator(
+                tokenizer=self.tokenizer,
+                response_template=self.dataset_args.response_template,
+                # set to `pad_to_multiple_of` to max_seq_length so that all distributed processes share the same
+                # sequence length. This is required for computing metrics.
+                pad_to_multiple_of=self.dataset_args.max_seq_length
+            )
         )
 
         step_threshold = self.args.local_max_steps
@@ -415,9 +401,9 @@ class LLMAggregator(ServerAggregator):
             model: ModelType,
             args: Arguments,
             tokenizer: TokenizerType,
+            training_args: TrainingArguments,
             model_args: ModelArguments,
-            dataset_args: DatasetArguments,
-            training_args: TrainingArguments
+            dataset_args: DatasetArguments
     ):
         super().__init__(model, args)
 
@@ -425,11 +411,19 @@ class LLMAggregator(ServerAggregator):
         self.model_args = model_args
         self.dataset_args = dataset_args
         self.training_args = training_args
-        self.trainer = get_hf_trainer(
+        self.trainer = FedLLMTrainer(
             model=self.model,
             tokenizer=self.tokenizer,
-            training_args=self.training_args,
-            dataset_args=self.dataset_args
+            args=self.training_args,
+            model_args=self.model_args,
+            dataset_args=self.dataset_args,
+            data_collator=get_data_collator(
+                tokenizer=self.tokenizer,
+                response_template=self.dataset_args.response_template,
+                # set to `pad_to_multiple_of` to max_seq_length so that all distributed processes share the same
+                # sequence length. This is required for computing metrics.
+                pad_to_multiple_of=self.dataset_args.max_seq_length
+            )
         )
 
         # save config
@@ -583,33 +577,34 @@ def main(args: Arguments) -> None:
 
     training_args, *_ = parse_hf_args(TrainingArguments, args)
 
-    # tokenizer need to be recreated after transformers.TrainingArguments to avoid serialization problems
-    tokenizer = get_tokenizer(model_args)
-
     # update cross-silo hierarchical related settings
     if getattr(args, "use_customized_hierarchical", False):
         setattr(args, "proc_rank_in_silo", training_args.process_index)
         setattr(args, "rank_in_node", training_args.local_process_index)
         setattr(args, "process_id", training_args.process_index)
 
+    # tokenizer need to be recreated after `transformers.TrainingArguments` to avoid serialization problems
+    tokenizer = get_tokenizer(model_args)
+
     model = get_model(
         model_args,
         tokenizer_length=len(tokenizer),
-        use_cache=not getattr(args, "gradient_checkpointing", False)
+        use_cache=not training_args.gradient_checkpointing
     )
 
     if dataset_args.max_seq_length is None:
         dataset_args.max_seq_length = get_max_seq_length(model)
         setattr(args, "max_seq_length", dataset_args.max_seq_length)
 
+    # load data
     with training_args.main_process_first():
-        train_dataset, test_dataset = get_dataset(
+        train_dataset, test_dataset, *_ = get_dataset(
             dataset_args=dataset_args,
             tokenizer=tokenizer,
-            seed=args.seed
+            seed=training_args.seed,
+            is_local_main_process=training_args.local_process_index == 0
         )
 
-    # load data
     dataset = transform_data_to_fedml_format(args, train_dataset, test_dataset)
 
     # FedML trainer
@@ -619,18 +614,18 @@ def main(args: Arguments) -> None:
             model=model,
             args=args,
             tokenizer=tokenizer,
-            dataset_args=dataset_args,
+            training_args=training_args,
             model_args=model_args,
-            training_args=training_args
+            dataset_args=dataset_args
         )
     elif args.role == "server":
         aggregator = LLMAggregator(
             model=model,
             args=args,
             tokenizer=tokenizer,
-            dataset_args=dataset_args,
+            training_args=training_args,
             model_args=model_args,
-            training_args=training_args
+            dataset_args=dataset_args
         )
     else:
         raise RuntimeError(f"Invalid value for \"role\". Only \"client\" and \"server\" "
