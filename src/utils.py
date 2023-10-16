@@ -1,7 +1,7 @@
 from .llm_finetune.src.utils import *
 # -----------------------------------------------------------------
 
-from typing import Callable
+from typing import Any, Callable, TypeVar
 
 import inspect
 import logging
@@ -23,12 +23,12 @@ def log_helper(
     )
 
 
-def dummy_func(*args, **kwargs) -> None:
+def dummy_func(*args: Any, **kwargs: Any) -> None:
     return None
 
 
 def get_dummy_func(default: T) -> Callable[..., T]:
-    def _func(*args, **kwargs) -> T:
+    def _func(*args: Any, **kwargs: Any) -> T:
         return default
 
     return _func

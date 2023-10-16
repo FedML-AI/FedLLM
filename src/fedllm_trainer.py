@@ -1,16 +1,19 @@
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple, TYPE_CHECKING, Union
 
 from torch import Tensor
 from torch.nn import Module
-from torch.optim import Optimizer
 from transformers import (
     EvalPrediction,
+    is_optuna_available,
     TrainerCallback,
     TrainerControl,
     TrainerState,
     TrainingArguments,
 )
 from transformers.trainer_utils import TrainOutput
+
+if TYPE_CHECKING and is_optuna_available():
+    import optuna
 
 from .configurations import DatasetArguments, ModelArguments
 from .hf_trainer import HFTrainer
@@ -19,6 +22,7 @@ from .typing import (
     DatasetType,
     LrSchedulerType,
     ModelType,
+    OptimizerType,
     TokenizerType,
 )
 from .utils import dummy_func
@@ -64,7 +68,7 @@ class FedLLMTrainer(HFTrainer):
             model_init: Optional[Callable[[], Union[ModelType, Module]]] = None,
             compute_metrics: Optional[Callable[[EvalPrediction], Dict]] = None,
             callbacks: Optional[List[TrainerCallback]] = None,
-            optimizers: Tuple[Optimizer, LrSchedulerType] = (None, None),
+            optimizers: Tuple[OptimizerType, LrSchedulerType] = (None, None),
             preprocess_logits_for_metrics: Optional[Callable[[Tensor, Tensor], Tensor]] = None,
             is_resume_from_interrupt: bool = False,
             resume_train_callback: Optional[FedLLMTrainerCallback] = None
@@ -97,13 +101,13 @@ class FedLLMTrainer(HFTrainer):
         if not self.is_resume_from_interrupt:
             return super().create_optimizer_and_scheduler(num_training_steps)
 
-    def create_optimizer(self) -> Optimizer:
+    def create_optimizer(self) -> OptimizerType:
         if not self.is_resume_from_interrupt:
             return super().create_optimizer()
         else:
             return self.optimizer
 
-    def create_scheduler(self, num_training_steps: int, optimizer: Optional[Optimizer] = None) -> LrSchedulerType:
+    def create_scheduler(self, num_training_steps: int, optimizer: Optional[OptimizerType] = None) -> LrSchedulerType:
         if not self.is_resume_from_interrupt:
             return super().create_scheduler(num_training_steps, optimizer)
         else:

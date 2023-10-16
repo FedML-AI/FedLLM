@@ -9,7 +9,6 @@ from pathlib import Path
 import warnings
 
 from accelerate.utils import broadcast_object_list
-from datasets import Dataset
 import fedml
 from fedml import FedMLRunner, mlops
 from fedml.arguments import Arguments
@@ -34,7 +33,7 @@ from src.llm_finetune.run_train import (
 from src.modeling_utils import get_data_collator, to_device
 from src.peft_utils import set_peft_model_state_dict
 from src.trainer_callback import PauseResumeCallback
-from src.typing import ModelType, PathType, TokenizerType
+from src.typing import DatasetType, ModelType, PathType, TokenizerType
 from src.utils import (
     get_real_path,
     is_file,
@@ -519,8 +518,8 @@ class LLMAggregator(ServerAggregator):
         setattr(self.args, "round_idx", round_idx)
 
 
-def transform_data_to_fedml_format(args: Arguments, train_dataset: Dataset, test_dataset: Dataset):
-    # TODO: scrutinize
+def transform_data_to_fedml_format(args: Arguments, train_dataset: DatasetType, test_dataset: DatasetType):
+    # TODO: support iterable dataset
     train_data_num = len(train_dataset)
     test_data_num = len(test_dataset)
     train_data_global = None
@@ -597,7 +596,7 @@ def main(args: Arguments) -> None:
         setattr(args, "max_seq_length", dataset_args.max_seq_length)
 
     # load data
-    with training_args.main_process_first():
+    with training_args.main_process_first(local=True):
         train_dataset, test_dataset, *_ = get_dataset(
             dataset_args=dataset_args,
             tokenizer=tokenizer,

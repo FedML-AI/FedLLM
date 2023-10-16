@@ -1,6 +1,8 @@
 from .llm_finetune.src.peft_utils import *
 # -----------------------------------------------------------------
 
+from typing import Any, Dict
+
 from torch.nn.modules.module import _IncompatibleKeys
 from peft import PeftModel, PeftType, PromptLearningConfig
 
@@ -10,7 +12,7 @@ from .modeling_utils import load_state_dict
 # Adapted from https://github.com/huggingface/peft/blob/c33c42f1582b13e9b14b6b9467eff9275164ea36/src/peft/utils/save_and_load.py#L82
 def set_peft_model_state_dict(
         model: PeftModel,
-        peft_model_state_dict,
+        peft_model_state_dict: Dict[str, Any],
         adapter_name: str = "default"
 ) -> _IncompatibleKeys:
     """

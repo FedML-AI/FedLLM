@@ -15,7 +15,7 @@ class PauseResumeCallback(TrainerCallback):
     def __init__(
             self,
             start_global_step: int = -1,
-            start_epoch: float = -1,
+            start_epoch: float = -1.,
             step_threshold: float = math.inf,
             epoch_threshold: float = math.inf
     ):
