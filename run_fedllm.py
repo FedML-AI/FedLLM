@@ -560,16 +560,16 @@ def main(args: Arguments) -> None:
 
     model_args, dataset_args = parse_hf_args((ModelArguments, DatasetArguments), args)
 
-    if args.local_rank == 0:
+    if args.role == "server" and args.local_rank == 0:
         # Initialize model before initializing TrainingArgs to load the full model in memory
-        # This is required when using DeepSpeed Zero3 w/ FedLLM
+        # This is required when using DeepSpeed Zero3
         model = get_model(
             model_args,
             tokenizer_length=len(get_tokenizer(model_args)),
             use_cache=not getattr(args, "gradient_checkpointing", False)
         )
 
-        # save initial model. This is required for DeepSpeed
+        # save initial model. This is required for DeepSpeed Zero3
         save_checkpoint(
             model_or_trainer=model,
             checkpoint_dir=Path(args.output_dir) / "init",
