@@ -56,8 +56,7 @@ train_args:
   # number of training epoch for each communication round, total epoch is local_num_train_epochs * comm_round
   local_num_train_epochs: 1
   # number of training steps for each communication round, total step is local_max_steps * comm_round;
-  #   this option overwrites `max_steps` and `local_num_train_epochs`;
-  #   set to a non-positive value to disable it.
+  #   this option overwrites `local_num_train_epochs`; set to a non-positive value to disable it.
   local_max_steps: 200
 
 validation_args:
