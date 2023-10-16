@@ -313,6 +313,18 @@ class LLMTrainer(ClientTrainer):
         set_peft_model_state_dict(self.model, model_parameters)
         barrier()
 
+        if self.round_idx >= 0:
+            # save aggregated model checkpoint
+            self.latest_checkpoint_dir = self.checkpoint_dir / f"round_{self.round_idx}_after_agg"
+            self.log(f"saving aggregated model to \"{self.latest_checkpoint_dir}\"")
+            save_checkpoint(
+                self.model,
+                self.latest_checkpoint_dir,
+                is_saving_process=self.training_args.should_save,
+                state_dict=model_parameters,
+                synchronize=True
+            )
+
         self.log("finished")
 
     def on_before_local_training(self, train_data, device, args: Arguments) -> None:
@@ -469,25 +481,19 @@ class LLMAggregator(ServerAggregator):
         set_peft_model_state_dict(self.model, model_parameters)
         barrier()
 
+        if self.round_idx >= 0:
+            # save aggregated model checkpoint
+            self.latest_checkpoint_dir = self.checkpoint_dir / f"round_{self.round_idx}_after_agg"
+            self.log(f"saving aggregated model to \"{self.latest_checkpoint_dir}\"")
+            save_checkpoint(
+                self.model,
+                self.latest_checkpoint_dir,
+                is_saving_process=self.training_args.should_save,
+                state_dict=model_parameters,
+                synchronize=True
+            )
+
         self.log("finished")
-
-    def on_after_aggregation(self, aggregated_model_or_grad: OrderedDict) -> OrderedDict:
-        outputs = super().on_after_aggregation(aggregated_model_or_grad)
-
-        self.latest_checkpoint_dir = self.checkpoint_dir / f"round_{self.round_idx}_after_agg"
-
-        self.log(f"saving aggregated model to \"{self.latest_checkpoint_dir}\"")
-        save_checkpoint(
-            self.model,
-            self.latest_checkpoint_dir,
-            is_saving_process=self.training_args.should_save,
-            state_dict=outputs
-        )
-
-        # all process should wait
-        barrier()
-
-        return outputs
 
     def test(self, test_data, device, args: Arguments) -> None:
         self.log("start")
