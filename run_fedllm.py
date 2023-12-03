@@ -1,4 +1,4 @@
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, Optional, Sized, Union
 
 from collections import OrderedDict
 import gc
@@ -9,6 +9,7 @@ from pathlib import Path
 import warnings
 
 from accelerate.utils import broadcast_object_list
+from datasets import IterableDataset
 import fedml
 from fedml import FedMLRunner, mlops
 from fedml.arguments import Arguments
@@ -17,22 +18,22 @@ from peft import PeftModel
 from peft.utils import WEIGHTS_NAME as PEFT_WEIGHTS_NAME
 import torch.cuda
 from torch.nn import Module
-from transformers import PreTrainedModel, TrainingArguments
+from transformers import PreTrainedModel
 from transformers.utils import WEIGHTS_NAME as HF_WEIGHTS_NAME
 
-from src.configurations import DatasetArguments, ModelArguments
+from src.configurations import DatasetArguments, ExperimentArguments, ModelArguments
 from src.distributed import barrier
 from src.fedllm_trainer import FedLLMTrainer
 from src.hf_trainer import HFTrainer
-from src.llm_finetune.run_train import (
+from src.modeling_utils import get_data_collator, to_device
+from src.peft_utils import set_peft_model_state_dict
+from src.trainer_callback import PauseResumeCallback
+from src.train_utils import (
     get_dataset,
     get_model,
     get_max_seq_length,
     get_tokenizer,
 )
-from src.modeling_utils import get_data_collator, to_device
-from src.peft_utils import set_peft_model_state_dict
-from src.trainer_callback import PauseResumeCallback
 from src.typing import DatasetType, ModelType, PathType, TokenizerType
 from src.utils import (
     get_real_path,
@@ -48,13 +49,39 @@ def _parse_args(args: Arguments) -> Arguments:
     # see https://pytorch.org/docs/stable/elastic/run.html
     args.local_rank = int(os.getenv("LOCAL_RANK", args.local_rank))
 
+    if not hasattr(args, "output_dir"):
+        raise ValueError("`output_dir` is required in the configuration file.")
+
+    args.output_dir = get_real_path(args.output_dir.format(run_id=args.run_id))
+    args.output_dir = str(Path(args.output_dir) / f"node_{args.rank}")
+
+    # set default value
+    if not hasattr(args, "is_aggregator_test"):
+        args.is_aggregator_test = False
+    if not hasattr(args, "use_customized_hierarchical"):
+        args.use_customized_hierarchical = False
+    if not hasattr(args, "test_on_client_ranks"):
+        args.test_on_client_ranks = []
+    if not hasattr(args, "test_on_clients"):
+        args.test_on_clients = "no"
+    if not hasattr(args, "local_num_train_epochs"):
+        args.local_num_train_epochs = None
+    if not hasattr(args, "local_max_steps"):
+        args.local_max_steps = None
+    if not hasattr(args, "frequency_of_the_test"):
+        args.frequency_of_the_test = 1
+    if not hasattr(args, "save_frequency"):
+        args.save_frequency = None
+
+    # verify and update
     if args.role == "client":
         if hasattr(args, "client_dataset_path"):
             args.dataset_path = args.client_dataset_path
-        if not getattr(args, "is_client_test", False):
+
+        if args.test_on_clients == "no" or args.rank not in args.test_on_client_ranks:
             # disable huggingface Trainer's logging when not testing on client
-            setattr(args, "report_to", "none")
-        setattr(args, "disable_tqdm", True)
+            args.report_to = "none"
+            args.disable_tqdm = True
 
     if hasattr(args, "client_dataset_path"):
         delattr(args, "client_dataset_path")
@@ -70,19 +97,13 @@ def _parse_args(args: Arguments) -> Arguments:
 
     if torch.cuda.device_count() == 0:
         logging.warning(f"{args.role} rank {args.rank} does not have GPU! Fallback to CPU mode.")
-        setattr(args, "deepspeed", None)
-        setattr(args, "use_flash_attention", False)
-
-    if not hasattr(args, "output_dir"):
-        raise ValueError("\"output_dir\" is required in the configuration file.")
-
-    args.output_dir = get_real_path(args.output_dir.format(run_id=args.run_id))
-    args.output_dir = str(Path(args.output_dir) / f"node_{args.rank}")
+        args.deepspeed = None
+        args.use_flash_attention = False
 
     # set default value for `num_train_epochs` and `local_num_train_epochs`
     if (
             getattr(args, "num_train_epochs", None) is not None and
-            getattr(args, "local_num_train_epochs", None) is None
+            args.local_num_train_epochs is None
     ):
         # if `num_train_epochs` is present but not `local_num_train_epochs`
         warnings.warn(
@@ -90,16 +111,16 @@ def _parse_args(args: Arguments) -> Arguments:
             "`local_num_train_epochs` instead.",
             FutureWarning
         )
-        setattr(args, "local_num_train_epochs", args.num_train_epochs)
+        args.local_num_train_epochs = args.num_train_epochs
 
-    if getattr(args, "local_num_train_epochs", None) is None:
+    if args.local_num_train_epochs is None:
         # set to HF default value
-        setattr(args, "local_num_train_epochs", 3.0)
+        args.local_num_train_epochs = 3.0
 
     # set default value for `max_steps` and `local_max_steps`
     if (
             getattr(args, "max_steps", None) is not None and
-            getattr(args, "local_max_steps", None) is None
+            args.local_max_steps is None
     ):
         # if `max_steps` is present but not `local_max_steps`
         warnings.warn(
@@ -107,19 +128,23 @@ def _parse_args(args: Arguments) -> Arguments:
             "`local_max_steps` instead.",
             FutureWarning
         )
-        setattr(args, "local_max_steps", args.max_steps)
+        args.local_max_steps = args.max_steps
 
-    if getattr(args, "local_max_steps", None) is None:
+    if args.local_max_steps is None:
         # set to HF default value
-        setattr(args, "local_max_steps", -1)
+        args.local_max_steps = -1
 
     assert args.local_max_steps > 0 or args.local_num_train_epochs > 0, \
         f"At least 1 of `local_max_steps` and `local_num_train_epochs` should be positive, " \
         f"but got {args.local_max_steps} and {args.local_num_train_epochs}"
 
     # update `num_train_epochs` and `max_steps`
-    setattr(args, "num_train_epochs", args.local_num_train_epochs * args.comm_round)
-    setattr(args, "max_steps", args.local_max_steps * args.comm_round)
+    args.num_train_epochs = args.local_num_train_epochs * args.comm_round
+    args.max_steps = args.local_max_steps * args.comm_round
+
+    # update save and evaluation settings
+    if args.save_frequency is None or args.save_frequency < 0:
+        args.save_frequency = args.frequency_of_the_test
 
     return args
 
@@ -224,7 +249,7 @@ class LLMTrainer(ClientTrainer):
             model: ModelType,
             args: Arguments,
             tokenizer: TokenizerType,
-            training_args: TrainingArguments,
+            training_args: ExperimentArguments,
             model_args: ModelArguments,
             dataset_args: DatasetArguments
     ):
@@ -238,8 +263,6 @@ class LLMTrainer(ClientTrainer):
             model=self.model,
             tokenizer=self.tokenizer,
             args=self.training_args,
-            model_args=self.model_args,
-            dataset_args=self.dataset_args,
             data_collator=get_data_collator(
                 tokenizer=self.tokenizer,
                 response_template=self.dataset_args.response_template,
@@ -313,7 +336,7 @@ class LLMTrainer(ClientTrainer):
         set_peft_model_state_dict(self.model, model_parameters)
         barrier()
 
-        if self.round_idx >= 0:
+        if self.round_idx >= 0 and self.should_save:
             # save aggregated model checkpoint
             self.latest_checkpoint_dir = self.checkpoint_dir / f"round_{self.round_idx}_after_agg"
             self.log(f"saving aggregated model to \"{self.latest_checkpoint_dir}\"")
@@ -332,7 +355,14 @@ class LLMTrainer(ClientTrainer):
 
         outputs = super().on_before_local_training(train_data, device, args)
 
-        self.trainer.train_dataset = train_data
+        if isinstance(train_data, IterableDataset):
+            # When streaming dataset, need to manually skip data samples
+            num_sample_to_skip = self.trainer.state.global_step * self.training_args.train_batch_size
+            self.trainer.train_dataset = train_data.skip(num_sample_to_skip)
+
+            self.log(f"Skip first {num_sample_to_skip:,} samples for iterable train dataset")
+        else:
+            self.trainer.train_dataset = train_data
 
         self.log("finished")
         return outputs
@@ -359,19 +389,40 @@ class LLMTrainer(ClientTrainer):
     def test(self, test_data, device, args) -> None:
         self.log("start")
 
-        if not self.is_run_test:
+        if not self.should_evaluate:
             self.log("skipped")
             return
 
-        metrics = self.trainer.evaluate(eval_dataset=test_data, metric_key_prefix=f"client{self.args.rank}_eval")
+        if len(self.args.test_on_client_ranks) <= 1:
+            # use default prefix if only test on no more than 1 client
+            metric_key_prefix = "eval"
+        else:
+            metric_key_prefix = f"client{self.args.rank}_eval"
+
+        metrics = self.trainer.evaluate(eval_dataset=test_data, metric_key_prefix=metric_key_prefix)
         if self.is_main_process():
             mlops.log({**metrics, "round_idx": self.round_idx})
 
         self.log("finished")
 
     @property
-    def is_run_test(self) -> bool:
-        return getattr(self.args, "is_client_test", False)
+    def should_evaluate(self) -> bool:
+        return (
+                self.args.test_on_clients != "no" and
+                self.args.rank in self.args.test_on_client_ranks and
+                # TODO: remove once `fedml` supports it
+                (
+                        self.round_idx % self.args.frequency_of_the_test == 0 or
+                        self.round_idx == self.args.comm_round - 1
+                )
+        )
+
+    @property
+    def should_save(self) -> bool:
+        if self.args.save_frequency is None or self.args.save_frequency < 0:
+            return self.should_evaluate
+        else:
+            return self.round_idx % self.args.save_frequency == 0 or self.round_idx == self.args.comm_round - 1
 
     @property
     def round_idx(self) -> int:
@@ -379,7 +430,7 @@ class LLMTrainer(ClientTrainer):
 
     @round_idx.setter
     def round_idx(self, round_idx: int) -> None:
-        setattr(self.args, "round_idx", round_idx)
+        self.args.round_idx = round_idx
 
     def sync_process_group(
             self,
@@ -412,7 +463,7 @@ class LLMAggregator(ServerAggregator):
             model: ModelType,
             args: Arguments,
             tokenizer: TokenizerType,
-            training_args: TrainingArguments,
+            training_args: ExperimentArguments,
             model_args: ModelArguments,
             dataset_args: DatasetArguments
     ):
@@ -426,8 +477,6 @@ class LLMAggregator(ServerAggregator):
             model=self.model,
             tokenizer=self.tokenizer,
             args=self.training_args,
-            model_args=self.model_args,
-            dataset_args=self.dataset_args,
             data_collator=get_data_collator(
                 tokenizer=self.tokenizer,
                 response_template=self.dataset_args.response_template,
@@ -481,7 +530,7 @@ class LLMAggregator(ServerAggregator):
         set_peft_model_state_dict(self.model, model_parameters)
         barrier()
 
-        if self.round_idx >= 0:
+        if self.round_idx >= 0 and self.should_save:
             # save aggregated model checkpoint
             self.latest_checkpoint_dir = self.checkpoint_dir / f"round_{self.round_idx}_after_agg"
             self.log(f"saving aggregated model to \"{self.latest_checkpoint_dir}\"")
@@ -498,7 +547,7 @@ class LLMAggregator(ServerAggregator):
     def test(self, test_data, device, args: Arguments) -> None:
         self.log("start")
 
-        if not self.is_run_test:
+        if not self.should_evaluate:
             self.log("skipped")
             return
 
@@ -512,8 +561,15 @@ class LLMAggregator(ServerAggregator):
         self.log("finished")
 
     @property
-    def is_run_test(self) -> bool:
-        return getattr(self.args, "is_aggregator_test", True)
+    def should_evaluate(self) -> bool:
+        return self.args.is_aggregator_test
+
+    @property
+    def should_save(self) -> bool:
+        if self.args.save_frequency is None or self.args.save_frequency < 0:
+            return self.should_evaluate
+        else:
+            return self.round_idx % self.args.save_frequency == 0 or self.round_idx == self.args.comm_round - 1
 
     @property
     def round_idx(self) -> int:
@@ -521,13 +577,37 @@ class LLMAggregator(ServerAggregator):
 
     @round_idx.setter
     def round_idx(self, round_idx: int) -> None:
-        setattr(self.args, "round_idx", round_idx)
+        self.args.round_idx = round_idx
 
 
-def transform_data_to_fedml_format(args: Arguments, train_dataset: DatasetType, test_dataset: DatasetType):
-    # TODO: support iterable dataset
-    train_data_num = len(train_dataset)
-    test_data_num = len(test_dataset)
+def transform_data_to_fedml_format(
+        args: Arguments,
+        training_args: ExperimentArguments,
+        dataset_args: DatasetArguments,
+        train_dataset: DatasetType,
+        test_dataset: DatasetType
+):
+    if isinstance(train_dataset, Sized):
+        train_data_num = len(train_dataset)
+    elif training_args.max_steps > 0:
+        # interpolate dataset size
+        train_data_num = training_args.max_steps * training_args.train_batch_size * training_args.world_size
+    else:
+        raise ValueError(
+            f"`local_max_steps` must be set to a positive value if dataloader does not have a length"
+            f" (e.g., dataset streaming), was {args.local_max_steps}"
+        )
+
+    if isinstance(test_dataset, Sized):
+        test_data_num = len(test_dataset)
+    elif dataset_args.eval_dataset_size > 0:
+        test_data_num = dataset_args.eval_dataset_size
+    else:
+        raise ValueError(
+            f"`eval_dataset_size` must be set to a positive value if dataloader does not have a length"
+            f" (e.g., dataset streaming), was {dataset_args.eval_dataset_size}"
+        )
+
     train_data_global = None
     test_data_global = None
     train_data_local_num_dict = dict()
@@ -539,7 +619,7 @@ def transform_data_to_fedml_format(args: Arguments, train_dataset: DatasetType, 
         test_data_global = test_dataset
     else:
         # client data
-        train_data_local_num_dict[args.rank - 1] = len(train_dataset)
+        train_data_local_num_dict[args.rank - 1] = train_data_num
         train_data_local_dict[args.rank - 1] = train_dataset
         test_data_local_dict[args.rank - 1] = test_dataset
     return (
@@ -580,13 +660,15 @@ def main(args: Arguments) -> None:
         gc.collect()
     barrier()
 
-    training_args, *_ = parse_hf_args(TrainingArguments, args)
+    training_args, *_ = parse_hf_args(ExperimentArguments, args)
+    # verify and update configs
+    training_args.add_and_verify_args(model_args, dataset_args, args)
 
     # update cross-silo hierarchical related settings
-    if getattr(args, "use_customized_hierarchical", False):
-        setattr(args, "proc_rank_in_silo", training_args.process_index)
-        setattr(args, "rank_in_node", training_args.local_process_index)
-        setattr(args, "process_id", training_args.process_index)
+    if args.use_customized_hierarchical:
+        args.proc_rank_in_silo = training_args.process_index
+        args.rank_in_node = training_args.local_process_index
+        args.process_id = training_args.process_index
 
     # tokenizer need to be recreated after `transformers.TrainingArguments` to avoid serialization problems
     tokenizer = get_tokenizer(model_args)
@@ -599,18 +681,22 @@ def main(args: Arguments) -> None:
 
     if dataset_args.max_seq_length is None:
         dataset_args.max_seq_length = get_max_seq_length(model)
-        setattr(args, "max_seq_length", dataset_args.max_seq_length)
+        args.max_seq_length = dataset_args.max_seq_length
 
     # load data
     with training_args.main_process_first(local=True):
-        train_dataset, test_dataset, *_ = get_dataset(
+        train_dataset, _, test_dataset = get_dataset(
             dataset_args=dataset_args,
             tokenizer=tokenizer,
             seed=training_args.seed,
             is_local_main_process=training_args.local_process_index == 0
         )
 
-    dataset = transform_data_to_fedml_format(args, train_dataset, test_dataset)
+        # prepend current rank to the seed then shuffle the training set
+        # this is required for geo-distributed training
+        train_dataset = train_dataset.shuffle(seed=int(f"{args.rank}{training_args.seed}"))
+
+    dataset = transform_data_to_fedml_format(args, training_args, dataset_args, train_dataset, test_dataset)
 
     # FedML trainer
     trainer = aggregator = None

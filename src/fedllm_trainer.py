@@ -1,4 +1,4 @@
-from typing import Any, Callable, Dict, List, Optional, Tuple, TYPE_CHECKING, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple, Type, TYPE_CHECKING, Union
 
 from torch import Tensor
 from torch.nn import Module
@@ -15,7 +15,7 @@ from transformers.trainer_utils import TrainOutput
 if TYPE_CHECKING and is_optuna_available():
     import optuna
 
-from .configurations import DatasetArguments, ModelArguments
+from .configurations import ExperimentArguments
 from .hf_trainer import HFTrainer
 from .typing import (
     DataCollatorType,
@@ -58,9 +58,7 @@ class FedLLMTrainer(HFTrainer):
     def __init__(
             self,
             model: Union[ModelType, Module] = None,
-            args: TrainingArguments = None,
-            model_args: ModelArguments = None,
-            dataset_args: DatasetArguments = None,
+            args: ExperimentArguments = None,
             data_collator: Optional[DataCollatorType] = None,
             train_dataset: Optional[DatasetType] = None,
             eval_dataset: Optional[Union[DatasetType, Dict[str, DatasetType]]] = None,
@@ -76,8 +74,6 @@ class FedLLMTrainer(HFTrainer):
         super().__init__(
             model=model,
             args=args,
-            model_args=model_args,
-            dataset_args=dataset_args,
             data_collator=data_collator,
             train_dataset=train_dataset,
             eval_dataset=eval_dataset,
@@ -96,6 +92,22 @@ class FedLLMTrainer(HFTrainer):
             resume_train_callback = FedLLMTrainerCallback()
         self.resume_train_callback = resume_train_callback
         self.add_callback(self.resume_train_callback)
+
+    def add_callback(self, callback: Union[Type[TrainerCallback], TrainerCallback]) -> None:
+        if isinstance(callback, type):
+            cb_class = callback
+            cb = cb_class()
+        else:
+            cb_class = type(callback)
+            cb = callback
+
+        if issubclass(cb_class, FedLLMTrainerCallback):
+            # at most one `FedLLMTrainerCallback` is allowed
+            if not self.has_callback(cb) and self.has_callback(FedLLMTrainerCallback):
+                self.pop_callback(FedLLMTrainerCallback)
+            self.resume_train_callback = cb
+
+        super().add_callback(cb)
 
     def create_optimizer_and_scheduler(self, num_training_steps: int) -> None:
         if not self.is_resume_from_interrupt:
