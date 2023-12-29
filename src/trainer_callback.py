@@ -15,7 +15,7 @@ class PauseResumeCallback(TrainerCallback):
     def __init__(
             self,
             start_global_step: int = -1,
-            start_epoch: float = -1,
+            start_epoch: float = -1.,
             step_threshold: float = math.inf,
             epoch_threshold: float = math.inf
     ):
@@ -63,7 +63,7 @@ class PauseResumeCallback(TrainerCallback):
             control: TrainerControl,
             **kwargs
     ) -> TrainerControl:
-        if state.global_step - self.start_global_step >= self.step_threshold:
+        if self.use_step_threshold and state.global_step - self.start_global_step >= self.step_threshold:
             control.should_training_stop = True
 
         elif self.use_epoch_threshold and state.epoch - self.start_epoch >= self.epoch_threshold:
@@ -91,11 +91,12 @@ class PauseResumeCallback(TrainerCallback):
             control: TrainerControl,
             **kwargs
     ) -> TrainerControl:
-        if args.max_steps is not None and state.global_step < args.max_steps:
-            control.should_training_stop = False
+        if args.max_steps > 0:
+            # positive `max_steps` overrides `num_train_epochs`
+            control.should_training_stop = not bool(state.global_step < args.max_steps)
 
-        elif args.max_steps is None and args.num_train_epochs is not None and state.epoch < args.num_train_epochs:
-            control.should_training_stop = False
+        elif args.num_train_epochs > 0:
+            control.should_training_stop = not bool(state.epoch < args.num_train_epochs)
 
         # save training progress for resuming
         self.start_global_step = state.global_step

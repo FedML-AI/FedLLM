@@ -364,8 +364,8 @@ for detail.
 We have tested our implement with the following setup:
 
 - Ubuntu `20.04.5 LTS` and `22.04.2 LTS`
-- CUDA `11.8`, `11.7` and `11.6`
-- Python `3.8.13` and `3.9.16`
+- CUDA `12.2`, `12.1`, `11.8`, `11.7` and `11.6`
+- Python `3.10.13`, `3.10.12`, `3.9.16`, and `3.8.13`
     - `fedml>=0.8.4a7`
     - `torch>=2.0.0,<=2.0.1`
     - `torchvision>=0.15.1,<=0.15.2`

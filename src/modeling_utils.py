@@ -6,9 +6,9 @@ from typing import (
     Dict,
     List,
     MutableMapping,
+    Optional,
     TypeVar,
     Union,
-    Optional,
 )
 
 import torch
